@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { padEngine, type PadPresetName, type PadStructure } from './audio/padEngine';
 
 const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
@@ -9,106 +9,49 @@ const estruturas: Array<{ value: PadStructure; label: string }> = [
   { value: 'root-fifth-octave', label: '1 + 5 + 8' },
 ];
 
-const presets: Array<{ value: PadPresetName; label: string }> = [
-  { value: 'base', label: 'Base' },
-  { value: 'atmospheric', label: 'Atmosférico' },
-  { value: 'open', label: 'Aberto' },
-];
-
 export default function App() {
   const [note, setNote] = useState<string>('C');
   const [octave, setOctave] = useState<number>(3);
   const [structure, setStructure] = useState<PadStructure>('root');
-  const [preset, setPreset] = useState<PadPresetName>('base');
-
-  const [volume, setVolume] = useState<number>(0.72);
-  const [reverb, setReverb] = useState<number>(0.5);
-  const [chorus, setChorus] = useState<number>(0.35);
-  const [modulation, setModulation] = useState<number>(0.3);
-  const [reverse, setReverse] = useState<number>(0.2);
-  const [brightness, setBrightness] = useState<number>(0.55);
-
+  const [preset, setPreset] = useState<PadPresetName>('warm');
+  const [volume, setVolume] = useState<number>(0.7);
+  const [reverb, setReverb] = useState<number>(0.35);
+  const [brightness, setBrightness] = useState<number>(1);
   const [playing, setPlaying] = useState<boolean>(false);
   const [audioHintVisible, setAudioHintVisible] = useState(true);
 
-  const applyFx = () => {
-    padEngine.setVolume(volume);
-    padEngine.setReverbAmount(reverb);
-    padEngine.setChorusAmount(chorus);
-    padEngine.setModulationAmount(modulation);
-    padEngine.setReverseAmount(reverse);
-    padEngine.setBrightness(brightness);
-  };
+  const statusText = useMemo(() => (playing ? 'Tocando' : 'Parado'), [playing]);
 
   const handleNoteTouch = async (nextNote: string) => {
-    try {
-      await padEngine.ensureStartedFromGesture();
-      setAudioHintVisible(false);
+    await padEngine.ensureStartedFromGesture();
+    setAudioHintVisible(false);
 
-      const sameNotePlaying = padEngine.isPlaying && padEngine.activeNote === nextNote;
+    const isPlaying = await padEngine.toggleOrSwitchPad(nextNote);
+    setPlaying(isPlaying);
 
-      if (sameNotePlaying) {
-        padEngine.stop();
-        setPlaying(false);
-        return;
-      }
-
-      await padEngine.startOrUpdate(nextNote, octave, structure, preset);
-      applyFx();
-
+    if (isPlaying) {
       setNote(nextNote);
-      setPlaying(true);
-    } catch (error) {
-      console.error('Erro ao tocar pad:', error);
-      setPlaying(false);
     }
   };
 
   const handlePresetChange = async (nextPreset: PadPresetName) => {
-    try {
-      setPreset(nextPreset);
-      await padEngine.updateSettings({ preset: nextPreset });
-      applyFx();
-
-      if (padEngine.isPlaying) {
-        setPlaying(true);
-      }
-    } catch (error) {
-      console.error('Erro ao trocar preset:', error);
-    }
+    setPreset(nextPreset);
+    await padEngine.updateSettings({ preset: nextPreset });
   };
 
   const handleOctaveChange = async (nextOctave: number) => {
-    try {
-      setOctave(nextOctave);
-      await padEngine.updateSettings({ octave: nextOctave });
-      applyFx();
-
-      if (padEngine.isPlaying) {
-        setPlaying(true);
-      }
-    } catch (error) {
-      console.error('Erro ao trocar oitava:', error);
-    }
+    setOctave(nextOctave);
+    await padEngine.updateSettings({ octave: nextOctave });
   };
 
   const handleStructureChange = async (nextStructure: PadStructure) => {
-    try {
-      setStructure(nextStructure);
-      await padEngine.updateSettings({ structure: nextStructure });
-      applyFx();
-
-      if (padEngine.isPlaying) {
-        setPlaying(true);
-      }
-    } catch (error) {
-      console.error('Erro ao trocar estrutura:', error);
-    }
+    setStructure(nextStructure);
+    await padEngine.updateSettings({ structure: nextStructure });
   };
 
   return (
     <div className="min-h-screen bg-black text-white">
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-3 px-3 pb-5 pt-3">
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-3 px-3 pb-5 pt-3 sm:pt-4">
         <section className="rounded-3xl border border-white/10 bg-zinc-900/90 p-3 shadow-2xl">
           <div className="mb-1 flex items-start justify-between gap-3">
             <div>
@@ -123,12 +66,10 @@ export default function App() {
                   playing ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-400'
                 }`}
               >
-                {playing ? 'Tocando' : 'Parado'}
+                {statusText}
               </p>
-              <p className="mt-2 text-xs text-zinc-400">Timbre Base Worship</p>
-              <p className="text-sm font-semibold text-zinc-200">
-                {presets.find((item) => item.value === preset)?.label}
-              </p>
+              <p className="mt-2 text-xs text-zinc-400">Preset</p>
+              <p className="text-sm font-semibold text-zinc-200">{preset === 'warm' ? 'Warm Pad' : preset === 'soft' ? 'Soft Pad' : preset === 'bright' ? 'Bright Pad' : preset === 'shimmer' ? 'Shimmer Pad' : 'Deep Pad'}</p>
             </div>
           </div>
 
@@ -141,12 +82,11 @@ export default function App() {
 
         <section className="grid grid-cols-4 gap-2">
           {NOTES.map((n) => {
-            const active = padEngine.activeNote === n;
-
+            const active = note === n && playing;
             return (
               <button
                 key={n}
-                onPointerDown={() => void handleNoteTouch(n)}
+                onClick={() => void handleNoteTouch(n)}
                 className={`h-16 rounded-2xl border text-lg font-black shadow-lg transition active:scale-[0.98] ${
                   active
                     ? 'border-cyan-200 bg-cyan-300 text-black shadow-[0_0_28px_rgba(34,211,238,0.42)]'
@@ -200,17 +140,17 @@ export default function App() {
             </div>
 
             <label className="block text-sm text-zinc-300">
-              Variação do Timbre Base
+              Timbre
               <select
                 className="mt-1 w-full rounded-xl bg-zinc-800 p-2.5"
                 value={preset}
                 onChange={(e) => void handlePresetChange(e.target.value as PadPresetName)}
               >
-                {presets.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
+                <option value="soft">Soft Pad</option>
+                <option value="warm">Warm Pad</option>
+                <option value="bright">Bright Pad</option>
+                <option value="shimmer">Shimmer Pad</option>
+                <option value="deep">Deep Pad</option>
               </select>
             </label>
 
@@ -249,63 +189,12 @@ export default function App() {
             </label>
 
             <label className="block text-sm text-zinc-300">
-              Chorus
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={chorus}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setChorus(v);
-                  padEngine.setChorusAmount(v);
-                }}
-              />
-            </label>
-
-            <label className="block text-sm text-zinc-300">
-              Modulação
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={modulation}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setModulation(v);
-                  padEngine.setModulationAmount(v);
-                }}
-              />
-            </label>
-
-            <label className="block text-sm text-zinc-300">
-              Reverse ambience
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={reverse}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setReverse(v);
-                  padEngine.setReverseAmount(v);
-                }}
-              />
-            </label>
-
-            <label className="block text-sm text-zinc-300">
               Brilho
               <input
                 className="mt-1 w-full"
                 type="range"
-                min="0"
-                max="1"
+                min="0.5"
+                max="2"
                 step="0.01"
                 value={brightness}
                 onChange={(e) => {
