@@ -177,15 +177,14 @@ export class PadEngine {
 
     synth.chain(filter, chorus, reverb, gain, this.masterGain);
 
-    const lfo = new Tone.LFO({
+    this.lfo = new Tone.LFO({
       frequency: 0.03 + this.modulationAmount * 0.25,
       min: Math.max(300, (700 + preset.filter + this.brightness * 1200) * 0.88),
       max: (700 + preset.filter + this.brightness * 1200) * 1.08,
     });
-
-    lfo.connect(filter.frequency);
-    lfo.start();
-    this.lfo = lfo;
+    
+    this.lfo?.connect(filter.frequency);
+    this.lfo?.start();
 
     return { synth, filter, chorus, reverb, gain, notes };
   }
