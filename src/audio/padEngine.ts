@@ -10,10 +10,10 @@ export type PadSettings = {
   preset: PadPresetName;
 };
 
-type SimpleOscillator = 'sine' | 'triangle' | 'sawtooth';
+type OscType = 'sine' | 'triangle' | 'sawtooth';
 
-type PadPreset = {
-  oscillator: SimpleOscillator;
+type Preset = {
+  oscillator: OscType;
   attack: number;
   release: number;
   filterFrequency: number;
@@ -25,7 +25,7 @@ type PadPreset = {
   gain: number;
 };
 
-type PadLayer = {
+type Layer = {
   synth: Tone.PolySynth<Tone.Synth>;
   filter: Tone.Filter;
   chorus: Tone.Chorus;
@@ -34,7 +34,7 @@ type PadLayer = {
   notes: string[];
 };
 
-const PRESETS: Record<PadPresetName, PadPreset> = {
+const PRESETS: Record<PadPresetName, Preset> = {
   soft: {
     oscillator: 'sine',
     attack: 1.8,
@@ -119,10 +119,7 @@ function getMidi(note: string, octave: number): number {
   };
 
   const semitone = map[note];
-  if (semitone === undefined) {
-    throw new Error(`Invalid note: ${note}`);
-  }
-
+  if (semitone === undefined) throw new Error(`Invalid note: ${note}`);
   return (octave + 1) * 12 + semitone;
 }
 
@@ -136,20 +133,14 @@ function midiToNoteName(midi: number): string {
 function buildPadNotes(note: string, octave: number, structure: PadStructure): string[] {
   const root = getMidi(note, octave);
 
-  if (structure === 'root') {
-    return [midiToNoteName(root)];
-  }
-
-  if (structure === 'root-fifth') {
-    return [midiToNoteName(root), midiToNoteName(root + 7)];
-  }
-
+  if (structure === 'root') return [midiToNoteName(root)];
+  if (structure === 'root-fifth') return [midiToNoteName(root), midiToNoteName(root + 7)];
   return [midiToNoteName(root), midiToNoteName(root + 7), midiToNoteName(root + 12)];
 }
 
 export class PadEngine {
   private initialized = false;
-  private activeLayer: PadLayer | null = null;
+  private activeLayer: Layer | null = null;
   private playingState = false;
 
   private currentSettings: PadSettings = {
@@ -188,18 +179,19 @@ export class PadEngine {
     this.initialized = true;
   }
 
-  private ensureInitialized(): asserts this is this & {
-    masterGain: Tone.Gain;
-    limiter: Tone.Limiter;
-  } {
+  private requireMaster(): { masterGain: Tone.Gain; limiter: Tone.Limiter } {
     if (!this.initialized || !this.masterGain || !this.limiter) {
       throw new Error('PadEngine not initialized. Call init() first.');
     }
+
+    return {
+      masterGain: this.masterGain,
+      limiter: this.limiter,
+    };
   }
 
-  private createLayer(settings: PadSettings): PadLayer {
-    this.ensureInitialized();
-
+  private createLayer(settings: PadSettings): Layer {
+    const { masterGain } = this.requireMaster();
     const preset = PRESETS[settings.preset];
     const notes = buildPadNotes(settings.note, settings.octave, settings.structure);
 
@@ -236,23 +228,16 @@ export class PadEngine {
 
     const gain = new Tone.Gain(0);
 
-    synth.chain(filter, chorus, reverb, gain, this.masterGain);
+    synth.chain(filter, chorus, reverb, gain, masterGain);
 
-    return {
-      synth,
-      filter,
-      chorus,
-      reverb,
-      gain,
-      notes,
-    };
+    return { synth, filter, chorus, reverb, gain, notes };
   }
 
-  private getTargetLayerGain(presetName: PadPresetName): number {
-    return this.volume * PRESETS[presetName].gain;
+  private getTargetGain(preset: PadPresetName): number {
+    return this.volume * PRESETS[preset].gain;
   }
 
-  private disposeLayer(layer: PadLayer, delayMs = 900): void {
+  private disposeLayer(layer: Layer, delayMs = 900): void {
     window.setTimeout(() => {
       layer.synth.dispose();
       layer.filter.dispose();
@@ -264,14 +249,13 @@ export class PadEngine {
 
   async startPad(settings: PadSettings): Promise<void> {
     await this.init();
-    this.ensureInitialized();
 
     const layer = this.createLayer(settings);
     const now = Tone.now();
 
     layer.synth.triggerAttack(layer.notes, now);
     layer.gain.gain.setValueAtTime(0, now);
-    layer.gain.gain.rampTo(this.getTargetLayerGain(settings.preset), 0.35);
+    layer.gain.gain.rampTo(this.getTargetGain(settings.preset), 0.35);
 
     if (this.activeLayer) {
       this.activeLayer.gain.gain.rampTo(0, 0.35);
@@ -285,11 +269,6 @@ export class PadEngine {
   }
 
   async updatePad(settings: PadSettings): Promise<void> {
-    if (!this.playingState) {
-      await this.startPad(settings);
-      return;
-    }
-
     await this.startPad(settings);
   }
 
@@ -325,6 +304,14 @@ export class PadEngine {
     this.stopPad();
   }
 
+  fadeOut(): void {
+    this.stopPad();
+  }
+
+  setHold(_value: boolean): void {
+    // compatibilidade com App antigo
+  }
+
   panic(): void {
     if (this.activeLayer) {
       this.activeLayer.synth.releaseAll();
@@ -341,18 +328,13 @@ export class PadEngine {
     this.volume = Math.max(0, Math.min(1, value));
 
     if (!this.activeLayer) return;
-
-    this.activeLayer.gain.gain.rampTo(
-      this.getTargetLayerGain(this.currentSettings.preset),
-      0.12
-    );
+    this.activeLayer.gain.gain.rampTo(this.getTargetGain(this.currentSettings.preset), 0.12);
   }
 
   setReverbAmount(value: number): void {
     this.reverbAmount = Math.max(0, Math.min(1, value));
 
     if (!this.activeLayer) return;
-
     const preset = PRESETS[this.currentSettings.preset];
     this.activeLayer.reverb.wet.rampTo(
       Math.min(1, preset.reverbWet * (this.reverbAmount / 0.35)),
@@ -364,12 +346,8 @@ export class PadEngine {
     this.brightness = Math.max(0.5, Math.min(2, value));
 
     if (!this.activeLayer) return;
-
     const preset = PRESETS[this.currentSettings.preset];
-    this.activeLayer.filter.frequency.rampTo(
-      preset.filterFrequency * this.brightness,
-      0.15
-    );
+    this.activeLayer.filter.frequency.rampTo(preset.filterFrequency * this.brightness, 0.15);
   }
 }
 
