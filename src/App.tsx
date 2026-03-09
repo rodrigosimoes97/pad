@@ -1,168 +1,141 @@
-import { useState } from 'react'
-import { padEngine, PadStructure, PadPresetName } from './audio/padEngine'
+import { useEffect, useMemo, useState } from 'react';
+import { padEngine } from './audio/padEngine';
+import { PAD_PRESETS } from './audio/presets';
+import { ControlPanel } from './components/ControlPanel';
+import { PerformancePadGrid } from './components/PerformancePadGrid';
+import { StatusBar } from './components/StatusBar';
+import { StudioPanel } from './components/StudioPanel';
+import { usePadSettings } from './hooks/usePadSettings';
+import { getDisplayNote, getStructureLabel, type SharpNote } from './utils/notes';
 
-const NOTES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+function App() {
+  const { state, setSettings, setControls, setDisplayMode, setMode, setAdvancedOpen } = usePadSettings();
+  const [isPlaying, setIsPlaying] = useState(false);
 
-export default function App() {
+  useEffect(() => {
+    padEngine.setVolume(state.controls.volume);
+  }, [state.controls.volume]);
 
-  const [note, setNote] = useState('C')
-  const [octave, setOctave] = useState(3)
-  const [structure, setStructure] = useState<PadStructure>('root')
-  const [preset, setPreset] = useState<PadPresetName>('soft')
-  const [volume, setVolume] = useState(0.7)
-  const [playing, setPlaying] = useState(false)
+  useEffect(() => {
+    padEngine.setReverbAmount(state.controls.reverb);
+  }, [state.controls.reverb]);
 
-  const startPad = async () => {
+  useEffect(() => {
+    padEngine.setBrightness(state.controls.brightness);
+  }, [state.controls.brightness]);
 
-    await padEngine.startOrUpdate(
-      note,
-      octave,
-      structure,
-      preset
-    )
+  useEffect(() => {
+    padEngine.setHold(state.controls.hold);
+  }, [state.controls.hold]);
 
-    padEngine.setVolume(volume)
+  const title = useMemo(() => `${getDisplayNote(state.settings.note, state.displayMode)} ${state.settings.octave}`, [state]);
 
-    setPlaying(true)
-  }
+  const subtitle = useMemo(
+    () => `${getStructureLabel(state.settings.structure)} • ${PAD_PRESETS[state.settings.preset].label}`,
+    [state.settings.structure, state.settings.preset]
+  );
 
-  const stopPad = () => {
+  const start = async () => {
+    await padEngine.startPad(state.settings);
+    setIsPlaying(true);
+  };
 
-    padEngine.stop()
+  const updateAndMaybePlay = async (next: typeof state.settings) => {
+    setSettings(next);
+    if (padEngine.isPlaying()) {
+      await padEngine.updatePad(next);
+      setIsPlaying(true);
+    }
+  };
 
-    setPlaying(false)
-  }
+  const pickNote = async (note: SharpNote) => {
+    const next = { ...state.settings, note };
+    setSettings(next);
 
-  const panic = () => {
+    if (padEngine.isPlaying()) {
+      await padEngine.updatePad(next);
+      setIsPlaying(true);
+      return;
+    }
 
-    padEngine.panic()
-
-    setPlaying(false)
-  }
+    await padEngine.startPad(next);
+    setIsPlaying(true);
+  };
 
   return (
-    <div className="min-h-screen bg-black text-white flex items-center justify-center">
+    <main className="mx-auto min-h-screen max-w-5xl space-y-3 px-3 pb-8 pt-4 text-white sm:px-4 sm:pt-6">
+      <StatusBar title={title} subtitle={subtitle} status={isPlaying ? 'PLAYING' : 'STOPPED'} />
 
-      <div className="bg-zinc-900 p-8 rounded-2xl w-[420px] space-y-6 shadow-xl">
-
-        <h1 className="text-2xl font-bold text-center">
-          Church Pad Player
-        </h1>
-
-        {/* NOTE */}
-        <div>
-          <label className="text-sm">Key</label>
-
-          <select
-            className="w-full mt-1 p-2 bg-zinc-800 rounded"
-            value={note}
-            onChange={(e)=>setNote(e.target.value)}
-          >
-            {NOTES.map(n => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-          </select>
-        </div>
-
-        {/* OCTAVE */}
-        <div>
-          <label className="text-sm">Octave</label>
-
-          <select
-            className="w-full mt-1 p-2 bg-zinc-800 rounded"
-            value={octave}
-            onChange={(e)=>setOctave(Number(e.target.value))}
-          >
-            <option value={2}>2</option>
-            <option value={3}>3</option>
-            <option value={4}>4</option>
-          </select>
-        </div>
-
-        {/* STRUCTURE */}
-        <div>
-          <label className="text-sm">Pad Structure</label>
-
-          <select
-            className="w-full mt-1 p-2 bg-zinc-800 rounded"
-            value={structure}
-            onChange={(e)=>setStructure(e.target.value as PadStructure)}
-          >
-            <option value="root">Root</option>
-            <option value="root-fifth">1 + 5</option>
-            <option value="root-fifth-octave">1 + 5 + 8</option>
-          </select>
-        </div>
-
-        {/* PRESET */}
-        <div>
-          <label className="text-sm">Sound</label>
-
-          <select
-            className="w-full mt-1 p-2 bg-zinc-800 rounded"
-            value={preset}
-            onChange={(e)=>setPreset(e.target.value as PadPresetName)}
-          >
-            <option value="soft">Soft Pad</option>
-            <option value="warm">Warm Pad</option>
-            <option value="bright">Bright Pad</option>
-          </select>
-        </div>
-
-        {/* VOLUME */}
-        <div>
-          <label className="text-sm">Volume</label>
-
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={volume}
-            onChange={(e)=>{
-              const v = Number(e.target.value)
-              setVolume(v)
-              padEngine.setVolume(v)
-            }}
-            className="w-full"
-          />
-        </div>
-
-        {/* STATUS */}
-        <div className="text-center text-sm text-zinc-400">
-          {playing
-            ? `Playing: ${note}`
-            : 'Pad stopped'}
-        </div>
-
-        {/* CONTROLS */}
-        <div className="flex gap-3">
-
-          <button
-            onClick={startPad}
-            className="flex-1 bg-green-600 hover:bg-green-500 rounded p-2"
-          >
-            Start
-          </button>
-
-          <button
-            onClick={stopPad}
-            className="flex-1 bg-red-600 hover:bg-red-500 rounded p-2"
-          >
-            Stop
-          </button>
-
-          <button
-            onClick={panic}
-            className="flex-1 bg-yellow-600 hover:bg-yellow-500 rounded p-2"
-          >
-            Panic
-          </button>
-
-        </div>
-
+      <div className="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-slate-900/60 p-2">
+        <button
+          type="button"
+          onClick={() => setMode('performance')}
+          className={`mode-btn ${state.mode === 'performance' ? 'mode-btn-active' : ''}`}
+        >
+          Performance
+        </button>
+        <button type="button" onClick={() => setMode('studio')} className={`mode-btn ${state.mode === 'studio' ? 'mode-btn-active' : ''}`}>
+          Studio
+        </button>
       </div>
 
-    </div>
-  )
+      <div className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+        <section className="space-y-3">
+          <PerformancePadGrid currentNote={state.settings.note} displayMode={state.displayMode} onSelect={(n) => void pickNote(n)} />
+
+          {state.mode === 'studio' && (
+            <StudioPanel
+              note={state.settings.note}
+              octave={state.settings.octave}
+              structure={state.settings.structure}
+              preset={state.settings.preset}
+              displayMode={state.displayMode}
+              onDisplayModeChange={setDisplayMode}
+              onNoteChange={(note) => void updateAndMaybePlay({ ...state.settings, note })}
+              onOctaveChange={(octave) => void updateAndMaybePlay({ ...state.settings, octave })}
+              onStructureChange={(structure) => void updateAndMaybePlay({ ...state.settings, structure })}
+              onPresetChange={(preset) => void updateAndMaybePlay({ ...state.settings, preset })}
+            />
+          )}
+        </section>
+
+        <ControlPanel
+          isPlaying={isPlaying}
+          octave={state.settings.octave}
+          structure={state.settings.structure}
+          preset={state.settings.preset}
+          volume={state.controls.volume}
+          reverb={state.controls.reverb}
+          brightness={state.controls.brightness}
+          hold={state.controls.hold}
+          advancedOpen={state.advancedOpen}
+          onStart={() => void start()}
+          onStop={() => {
+            padEngine.stopPad();
+            setIsPlaying(false);
+          }}
+          onPanic={() => {
+            void padEngine.panic();
+            setIsPlaying(false);
+          }}
+          onFadeOut={() => {
+            padEngine.fadeOut();
+            setIsPlaying(false);
+          }}
+          onToggleHold={() => setControls({ ...state.controls, hold: !state.controls.hold })}
+          onToggleAdvanced={() => setAdvancedOpen(!state.advancedOpen)}
+          onOctaveChange={(octave) => void updateAndMaybePlay({ ...state.settings, octave })}
+          onStructureChange={(structure) => void updateAndMaybePlay({ ...state.settings, structure })}
+          onPresetChange={(preset) => void updateAndMaybePlay({ ...state.settings, preset })}
+          onVolumeChange={(volume) => setControls({ ...state.controls, volume })}
+          onReverbChange={(reverb) => setControls({ ...state.controls, reverb })}
+          onBrightnessChange={(brightness) => setControls({ ...state.controls, brightness })}
+        />
+      </div>
+
+      <footer className="text-center text-xs text-slate-400">Toque em Start (ou em um pad) para liberar o áudio no navegador.</footer>
+    </main>
+  );
 }
+
+export default App;

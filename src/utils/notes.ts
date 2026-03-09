@@ -5,7 +5,13 @@ export type SharpNote = (typeof SHARP_NOTES)[number];
 export type DisplayMode = 'sharp' | 'flat';
 export type PadStructure = 'root' | 'root5' | 'root58';
 
-const SEMITONES_BY_SHARP: Record<SharpNote, number> = {
+const INTERVALS: Record<PadStructure, number[]> = {
+  root: [0],
+  root5: [0, 7],
+  root58: [0, 7, 12]
+};
+
+const NOTE_TO_SEMITONE: Record<SharpNote, number> = {
   C: 0,
   'C#': 1,
   D: 2,
@@ -20,27 +26,30 @@ const SEMITONES_BY_SHARP: Record<SharpNote, number> = {
   B: 11
 };
 
-export const displayNote = (note: SharpNote, mode: DisplayMode): string => {
+export const getDisplayNote = (note: SharpNote, mode: DisplayMode): string => {
   if (mode === 'sharp') return note;
-  const idx = SHARP_NOTES.indexOf(note);
-  return FLAT_NOTES[idx];
+  return FLAT_NOTES[SHARP_NOTES.indexOf(note)];
 };
 
-export const toPitch = (note: SharpNote, octave: number): string => `${note}${octave}`;
+export const getStructureLabel = (structure: PadStructure): string => {
+  if (structure === 'root') return 'Root';
+  if (structure === 'root5') return '1 + 5';
+  return '1 + 5 + 8';
+};
 
-export const buildPadNotes = (note: SharpNote, octave: number, structure: PadStructure): string[] => {
-  const midiRoot = (octave + 1) * 12 + SEMITONES_BY_SHARP[note];
-  const safeRoot = Math.min(72, Math.max(36, midiRoot));
+export const getPadNotes = (note: SharpNote, octave: number, structure: PadStructure): string[] => {
+  const rootMidi = Math.max(36, Math.min(72, (octave + 1) * 12 + NOTE_TO_SEMITONE[note]));
+  const notes = INTERVALS[structure].map((interval) => rootMidi + interval);
 
-  const base = [safeRoot];
-  if (structure === 'root5' || structure === 'root58') base.push(safeRoot + 7);
-  if (structure === 'root58') base.push(safeRoot + 12);
+  if (structure === 'root58' && rootMidi >= 64) {
+    notes[2] = rootMidi + 7; // voicing conservador em registros mais altos
+  }
 
-  return base.map(midiToPitch);
+  return notes.map(midiToPitch);
 };
 
 const midiToPitch = (midi: number): string => {
-  const noteIndex = ((midi % 12) + 12) % 12;
+  const note = SHARP_NOTES[((midi % 12) + 12) % 12];
   const oct = Math.floor(midi / 12) - 1;
-  return `${SHARP_NOTES[noteIndex]}${oct}`;
+  return `${note}${oct}`;
 };

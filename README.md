@@ -1,27 +1,26 @@
 # Church Pad Player
 
-Aplicativo web musical para tocar **pads contínuos e suaves** no navegador, ideal para acompanhar músicas ao vivo em igreja.
+App web musical (100% front-end) para tocar pads contínuos em contexto ao vivo, com foco em **uso no celular**, **troca rápida de tom** e **som ambiente suave para igreja**.
 
-## Funcionalidades
+## Destaques da versão atual
 
-- Pad contínuo com **Tone.js** (frontend puro).
-- Seleção de tônica: `C, C#, D, D#, E, F, F#, G, G#, A, A#, B`.
-- Exibição enarmônica amigável (sustenidos ou bemóis).
-- Seleção de oitava base (2, 3, 4 e 5).
-- Estruturas de pad:
-  - Root only
-  - 1 + 5
-  - 1 + 5 + 8
-- Presets de timbre:
-  - Soft Pad
-  - Warm Pad
-  - Bright Pad
-- Controle de volume.
-- Botões **Start**, **Stop** e **Panic / Reset Audio**.
-- Fade in/out suave e atualização sem clique agressivo.
-- Indicador visual de estado tocando/parado e pad atual.
-- Persistência de preferências no `localStorage`.
-- Interface dark mode, responsiva e otimizada para uso ao vivo.
+- **Performance Mode (mobile-first)** com grade de 12 pads grandes para troca instantânea de tom.
+- **Troca de tom sem parar o pad** com crossfade curto entre camadas (sem corte seco).
+- **Studio Mode** opcional para ajustes mais detalhados.
+- Engine de áudio com Tone.js e cadeia musical: synth + filter + chorus + reverb + limiter.
+- Presets: **Soft, Warm, Bright, Shimmer, Deep**.
+- Controles ao vivo em tempo real:
+  - Volume
+  - Reverb
+  - Brightness (Tone)
+- Recursos de palco:
+  - Start / Stop / Panic
+  - Hold
+  - Fade Out
+- Persistência de preferências no `localStorage`:
+  - tom, oitava, estrutura, preset
+  - volume, reverb, brightness, hold
+  - modo da interface e painel avançado
 
 ## Stack
 
@@ -31,83 +30,70 @@ Aplicativo web musical para tocar **pads contínuos e suaves** no navegador, ide
 - Tailwind CSS
 - Tone.js
 
-## Desenvolvimento local
-
-### 1) Instalar dependências
+## Como rodar localmente
 
 ```bash
 npm install
-```
-
-### 2) Rodar em modo desenvolvimento
-
-```bash
 npm run dev
 ```
 
-### 3) Build de produção
+Build de produção:
 
 ```bash
 npm run build
-```
-
-### 4) Visualizar build local
-
-```bash
 npm run preview
 ```
 
+## Observação importante sobre áudio
+
+Browsers exigem gesto do usuário para liberar áudio. Use **Start** (ou toque em um pad) para inicializar o contexto (`Tone.start()`).
+
 ## Deploy no GitHub Pages
 
-### 1) Ajustar `base` no Vite
+### 1) Ajustar o `base` no Vite
 
-Edite `vite.config.ts` e altere a constante `repoName` para o nome real do seu repositório:
+Edite `vite.config.ts` e ajuste `repoName` para o nome do seu repositório:
 
 ```ts
 const repoName = 'church-pad-player';
 ```
 
-Exemplo:
-- Repositório: `https://github.com/seu-usuario/minha-pad-app`
-- URL final no Pages: `https://seu-usuario.github.io/minha-pad-app/`
-- Valor esperado: `repoName = 'minha-pad-app'`
+Exemplo: `https://seu-usuario.github.io/meu-repo/` → `repoName = 'meu-repo'`.
 
-### 2) Habilitar GitHub Pages
+### 2) Habilitar Pages por GitHub Actions
 
-No GitHub:
-- Settings → Pages
-- Source: **GitHub Actions**
+No GitHub: **Settings → Pages → Source: GitHub Actions**.
 
-### 3) Fazer push para `main`
+### 3) Push para `main`
 
-O workflow `.github/workflows/deploy.yml` irá:
-- instalar dependências
-- gerar build
-- criar fallback `404.html` para SPA
-- publicar automaticamente no GitHub Pages
+O workflow `.github/workflows/deploy.yml` já:
+- instala dependências
+- gera build
+- cria `404.html` para fallback SPA
+- publica no GitHub Pages
 
-## Observação importante sobre áudio
-
-Browsers modernos exigem interação do usuário para iniciar o áudio. Portanto, use o botão **Start Pad** para liberar o contexto de áudio (`Tone.start()`).
-
-## Estrutura do projeto
+## Estrutura principal
 
 ```text
 src/
   audio/
+    audioTypes.ts
     padEngine.ts
     presets.ts
   components/
-    PadControls.tsx
-    Slider.tsx
-    StatusDisplay.tsx
-    TransportButtons.tsx
+    ControlPanel.tsx
+    PadButton.tsx
+    PerformancePadGrid.tsx
+    SliderControl.tsx
+    StatusBar.tsx
+    StudioPanel.tsx
+  hooks/
+    useLocalStorageState.ts
+    usePadSettings.ts
   utils/
+    cn.ts
     notes.ts
-    storage.ts
   App.tsx
   main.tsx
   styles.css
-.github/workflows/deploy.yml
-vite.config.ts
 ```
