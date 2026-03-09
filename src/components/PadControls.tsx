@@ -98,7 +98,7 @@ export const PadControls = ({
 
     <div className="rounded-lg border border-slate-700 bg-slate-900/50 px-4 py-3 text-sm text-slate-300">
       <p className="font-semibold text-white">Nota atual</p>
-      <p className="mt-1 text-lg text-mint">{displayNote(note, displayMode)}</p>
+      <p className="mt-1 text-lg text-mint">{getDisplayNote(note, displayMode)}</p>
     </div>
   </div>
 );
