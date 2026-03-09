@@ -33,32 +33,77 @@ export default function App() {
 
   const statusText = useMemo(() => (playing ? 'Tocando' : 'Parado'), [playing]);
 
-  const handleNoteTouch = async (nextNote: string) => {
+ const handleNoteTouch = async (nextNote: string) => {
+  try {
     await padEngine.ensureStartedFromGesture();
     setAudioHintVisible(false);
 
-    const isPlaying = await padEngine.toggleOrSwitchPad(nextNote);
-    setPlaying(isPlaying);
+    const sameNotePlaying = playing && note === nextNote;
 
-    if (isPlaying) {
-      setNote(nextNote);
+    if (sameNotePlaying) {
+      padEngine.stop();
+      setPlaying(false);
+      return;
     }
-  };
 
-  const handlePresetChange = async (nextPreset: PadPresetName) => {
-    setPreset(nextPreset);
-    await padEngine.updateSettings({ preset: nextPreset });
-  };
+    await padEngine.startOrUpdate(nextNote, octave, structure, preset);
 
-  const handleOctaveChange = async (nextOctave: number) => {
-    setOctave(nextOctave);
-    await padEngine.updateSettings({ octave: nextOctave });
-  };
+    padEngine.setVolume(volume);
+    padEngine.setReverbAmount(reverb);
+    padEngine.setChorusAmount(chorus);
+    padEngine.setModulationAmount(modulation);
+    padEngine.setReverseAmount(reverse);
+    padEngine.setBrightness(brightness);
+
+    setNote(nextNote);
+    setPlaying(true);
+  } catch (error) {
+    console.error('Erro ao tocar pad:', error);
+    setPlaying(false);
+  }
+};
+
+const handlePresetChange = async (nextPreset: PadPresetName) => {
+  setPreset(nextPreset);
+
+  if (playing) {
+    await padEngine.startOrUpdate(note, octave, structure, nextPreset);
+    padEngine.setVolume(volume);
+    padEngine.setReverbAmount(reverb);
+    padEngine.setChorusAmount(chorus);
+    padEngine.setModulationAmount(modulation);
+    padEngine.setReverseAmount(reverse);
+    padEngine.setBrightness(brightness);
+  }
+};
+
+ const handleOctaveChange = async (nextOctave: number) => {
+  setOctave(nextOctave);
+
+  if (playing) {
+    await padEngine.startOrUpdate(note, nextOctave, structure, preset);
+    padEngine.setVolume(volume);
+    padEngine.setReverbAmount(reverb);
+    padEngine.setChorusAmount(chorus);
+    padEngine.setModulationAmount(modulation);
+    padEngine.setReverseAmount(reverse);
+    padEngine.setBrightness(brightness);
+  }
+};
 
   const handleStructureChange = async (nextStructure: PadStructure) => {
-    setStructure(nextStructure);
-    await padEngine.updateSettings({ structure: nextStructure });
-  };
+  setStructure(nextStructure);
+
+  if (playing) {
+    await padEngine.startOrUpdate(note, octave, nextStructure, preset);
+    padEngine.setVolume(volume);
+    padEngine.setReverbAmount(reverb);
+    padEngine.setChorusAmount(chorus);
+    padEngine.setModulationAmount(modulation);
+    padEngine.setReverseAmount(reverse);
+    padEngine.setBrightness(brightness);
+  }
+};
 
   return (
     <div className="min-h-screen bg-black text-white">
