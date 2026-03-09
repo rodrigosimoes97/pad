@@ -141,7 +141,7 @@ export default function App() {
 
         <section className="grid grid-cols-4 gap-2">
           {NOTES.map((n) => {
-            const active = note === n && playing;
+            const active = padEngine.activeNote === n;
 
             return (
               <button
