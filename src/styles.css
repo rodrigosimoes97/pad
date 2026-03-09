@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at top, rgba(91, 33, 182, 0.35), #030712 42%);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@layer components {
+  .input {
+    @apply w-full rounded-xl border border-white/15 bg-slate-800/90 px-3 py-2 text-sm text-white outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-500/40;
+  }
+
+  .btn-primary {
+    @apply rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-[0_0_20px_rgba(139,92,246,0.35)] transition hover:bg-violet-500;
+  }
+
+  .btn-muted {
+    @apply rounded-xl bg-slate-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-45;
+  }
+
+  .btn-danger {
+    @apply rounded-xl bg-rose-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-rose-600;
+  }
+
+  .mode-btn {
+    @apply w-full rounded-lg px-4 py-2 text-sm font-semibold text-slate-300 transition;
+  }
+
+  .mode-btn-active {
+    @apply bg-violet-500/30 text-white;
+  }
+}
