@@ -1,101 +1,168 @@
-import { useEffect, useMemo, useState } from 'react';
-import { padEngine } from './audio/padEngine';
-import { PAD_PRESETS } from './audio/presets';
-import { PadControls } from './components/PadControls';
-import { Slider } from './components/Slider';
-import { StatusDisplay } from './components/StatusDisplay';
-import { TransportButtons } from './components/TransportButtons';
-import { buildPadNotes, displayNote } from './utils/notes';
-import { loadSettings, saveSettings, type PadSettings } from './utils/storage';
+import { useState } from 'react'
+import { padEngine, PadStructure, PadPresetName } from './audio/padEngine'
 
-function App() {
-  const [settings, setSettings] = useState<PadSettings>(() => loadSettings());
-  const [isPlaying, setIsPlaying] = useState(false);
+const NOTES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 
-  useEffect(() => {
-    saveSettings(settings);
-  }, [settings]);
+export default function App() {
 
-  const currentLabel = useMemo(() => {
-    const display = displayNote(settings.note, settings.displayMode);
-    const structureLabel =
-      settings.structure === 'root' ? 'Root only' : settings.structure === 'root5' ? '1 + 5' : '1 + 5 + 8';
-    return `${display} • ${structureLabel} • ${PAD_PRESETS[settings.preset].label}`;
-  }, [settings]);
+  const [note, setNote] = useState('C')
+  const [octave, setOctave] = useState(3)
+  const [structure, setStructure] = useState<PadStructure>('root')
+  const [preset, setPreset] = useState<PadPresetName>('soft')
+  const [volume, setVolume] = useState(0.7)
+  const [playing, setPlaying] = useState(false)
 
-  const updatePadIfPlaying = async (next: PadSettings): Promise<void> => {
-    if (!padEngine.isPlaying) return;
-    const notes = buildPadNotes(next.note, next.octave, next.structure);
-    await padEngine.startOrUpdate({ notes, preset: next.preset, volume: next.volume });
-    setIsPlaying(true);
-  };
+  const startPad = async () => {
 
-  const updateSettings = <K extends keyof PadSettings>(key: K, value: PadSettings[K]) => {
-    const next = { ...settings, [key]: value };
-    setSettings(next);
-    void updatePadIfPlaying(next);
-  };
+    await padEngine.startOrUpdate(
+      note,
+      octave,
+      structure,
+      preset
+    )
 
-  const handleStart = async () => {
-    const notes = buildPadNotes(settings.note, settings.octave, settings.structure);
-    await padEngine.startOrUpdate({ notes, preset: settings.preset, volume: settings.volume });
-    setIsPlaying(true);
-  };
+    padEngine.setVolume(volume)
 
-  const handleStop = () => {
-    padEngine.stop();
-    setIsPlaying(false);
-  };
+    setPlaying(true)
+  }
 
-  const handlePanic = async () => {
-    await padEngine.panic();
-    setIsPlaying(false);
-  };
+  const stopPad = () => {
 
-  useEffect(() => {
-    return () => {
-      void padEngine.panic();
-    };
-  }, []);
+    padEngine.stop()
+
+    setPlaying(false)
+  }
+
+  const panic = () => {
+
+    padEngine.panic()
+
+    setPlaying(false)
+  }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(124,58,237,0.35),_rgba(7,9,15,1)_45%)] px-4 py-10 text-white">
-      <div className="mx-auto max-w-3xl">
-        <header className="mb-6 text-center">
-          <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Church Pad Player</h1>
-          <p className="mt-2 text-sm text-slate-300 sm:text-base">Pads contínuos, suaves e prontos para uso ao vivo.</p>
-        </header>
+    <div className="min-h-screen bg-black text-white flex items-center justify-center">
 
-        <section className="rounded-2xl border border-violet-500/20 bg-card/85 p-5 shadow-glow backdrop-blur sm:p-7">
-          <PadControls
-            note={settings.note}
-            octave={settings.octave}
-            structure={settings.structure}
-            preset={settings.preset}
-            displayMode={settings.displayMode}
-            onNoteChange={(note) => updateSettings('note', note)}
-            onOctaveChange={(octave) => updateSettings('octave', octave)}
-            onStructureChange={(structure) => updateSettings('structure', structure)}
-            onPresetChange={(preset) => updateSettings('preset', preset)}
-            onDisplayModeChange={(displayMode) => updateSettings('displayMode', displayMode)}
+      <div className="bg-zinc-900 p-8 rounded-2xl w-[420px] space-y-6 shadow-xl">
+
+        <h1 className="text-2xl font-bold text-center">
+          Church Pad Player
+        </h1>
+
+        {/* NOTE */}
+        <div>
+          <label className="text-sm">Key</label>
+
+          <select
+            className="w-full mt-1 p-2 bg-zinc-800 rounded"
+            value={note}
+            onChange={(e)=>setNote(e.target.value)}
+          >
+            {NOTES.map(n => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* OCTAVE */}
+        <div>
+          <label className="text-sm">Octave</label>
+
+          <select
+            className="w-full mt-1 p-2 bg-zinc-800 rounded"
+            value={octave}
+            onChange={(e)=>setOctave(Number(e.target.value))}
+          >
+            <option value={2}>2</option>
+            <option value={3}>3</option>
+            <option value={4}>4</option>
+          </select>
+        </div>
+
+        {/* STRUCTURE */}
+        <div>
+          <label className="text-sm">Pad Structure</label>
+
+          <select
+            className="w-full mt-1 p-2 bg-zinc-800 rounded"
+            value={structure}
+            onChange={(e)=>setStructure(e.target.value as PadStructure)}
+          >
+            <option value="root">Root</option>
+            <option value="root-fifth">1 + 5</option>
+            <option value="root-fifth-octave">1 + 5 + 8</option>
+          </select>
+        </div>
+
+        {/* PRESET */}
+        <div>
+          <label className="text-sm">Sound</label>
+
+          <select
+            className="w-full mt-1 p-2 bg-zinc-800 rounded"
+            value={preset}
+            onChange={(e)=>setPreset(e.target.value as PadPresetName)}
+          >
+            <option value="soft">Soft Pad</option>
+            <option value="warm">Warm Pad</option>
+            <option value="bright">Bright Pad</option>
+          </select>
+        </div>
+
+        {/* VOLUME */}
+        <div>
+          <label className="text-sm">Volume</label>
+
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={volume}
+            onChange={(e)=>{
+              const v = Number(e.target.value)
+              setVolume(v)
+              padEngine.setVolume(v)
+            }}
+            className="w-full"
           />
+        </div>
 
-          <div className="mt-5">
-            <Slider id="volume" label="Volume" value={settings.volume} min={0} max={1} onChange={(v) => updateSettings('volume', v)} />
-          </div>
+        {/* STATUS */}
+        <div className="text-center text-sm text-zinc-400">
+          {playing
+            ? `Playing: ${note}`
+            : 'Pad stopped'}
+        </div>
 
-          <div className="mt-5 space-y-4">
-            <StatusDisplay isPlaying={isPlaying} currentLabel={currentLabel} />
-            <TransportButtons isPlaying={isPlaying} onStart={() => void handleStart()} onStop={handleStop} onPanic={() => void handlePanic()} />
-          </div>
+        {/* CONTROLS */}
+        <div className="flex gap-3">
 
-          <footer className="mt-5 text-center text-xs text-slate-400">
-            Use Start para liberar o áudio no navegador.
-          </footer>
-        </section>
+          <button
+            onClick={startPad}
+            className="flex-1 bg-green-600 hover:bg-green-500 rounded p-2"
+          >
+            Start
+          </button>
+
+          <button
+            onClick={stopPad}
+            className="flex-1 bg-red-600 hover:bg-red-500 rounded p-2"
+          >
+            Stop
+          </button>
+
+          <button
+            onClick={panic}
+            className="flex-1 bg-yellow-600 hover:bg-yellow-500 rounded p-2"
+          >
+            Panic
+          </button>
+
+        </div>
+
       </div>
-    </main>
-  );
-}
 
-export default App;
+    </div>
+  )
+}
