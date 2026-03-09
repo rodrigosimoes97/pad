@@ -368,6 +368,22 @@ export class PadEngine {
     this.playingState = true;
   }
 
+  async startOrUpdate(
+    note: string,
+    octave: number,
+    structure: PadStructure,
+    preset: PadPresetName
+  ): Promise<void> {
+    await this.updateSettings({
+      note,
+      octave,
+      structure,
+      preset,
+    });
+  
+    await this.ensureStartedFromGesture();
+  }
+
   async toggleOrSwitchPad(note: string): Promise<boolean> {
     await this.ensureStartedFromGesture();
 
