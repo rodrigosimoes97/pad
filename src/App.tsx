@@ -24,7 +24,7 @@ function App() {
   }, [settings]);
 
   const updatePadIfPlaying = async (next: PadSettings): Promise<void> => {
-    if (!padEngine.isPlaying()) return;
+    if (!padEngine.isPlaying) return;
     const notes = buildPadNotes(next.note, next.octave, next.structure);
     await padEngine.startOrUpdate({ notes, preset: next.preset, volume: next.volume });
     setIsPlaying(true);
