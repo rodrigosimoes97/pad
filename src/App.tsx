@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { padEngine, type PadPresetName, type PadStructure } from './audio/padEngine';
 
 const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
@@ -31,68 +31,72 @@ export default function App() {
   const [playing, setPlaying] = useState<boolean>(false);
   const [audioHintVisible, setAudioHintVisible] = useState(true);
 
-  const statusText = useMemo(() => (playing ? 'Tocando' : 'Parado'), [playing]);
+  const handleNoteTouch = async (nextNote: string) => {
+    try {
+      await padEngine.ensureStartedFromGesture();
+      setAudioHintVisible(false);
 
- const handleNoteTouch = async (nextNote: string) => {
-  try {
-    await padEngine.ensureStartedFromGesture();
-    setAudioHintVisible(false);
+      const sameNotePlaying = padEngine.isPlaying && padEngine.activeNote === nextNote;
 
-    const sameNotePlaying = padEngine.isPlaying && padEngine.activeNote === nextNote;
+      if (sameNotePlaying) {
+        padEngine.stop();
+        setPlaying(false);
+        return;
+      }
 
-    if (sameNotePlaying) {
-      padEngine.stop();
+      await padEngine.startOrUpdate(nextNote, octave, structure, preset);
+
+      padEngine.setVolume(volume);
+      padEngine.setReverbAmount(reverb);
+      padEngine.setChorusAmount(chorus);
+      padEngine.setModulationAmount(modulation);
+      padEngine.setReverseAmount(reverse);
+      padEngine.setBrightness(brightness);
+
+      setNote(nextNote);
+      setPlaying(true);
+    } catch (error) {
+      console.error('Erro ao tocar pad:', error);
       setPlaying(false);
-      return;
     }
+  };
 
-    await padEngine.startOrUpdate(nextNote, octave, structure, preset);
+  const handlePresetChange = async (nextPreset: PadPresetName) => {
+    setPreset(nextPreset);
 
-    padEngine.setVolume(volume);
-    padEngine.setReverbAmount(reverb);
-    padEngine.setChorusAmount(chorus);
-    padEngine.setModulationAmount(modulation);
-    padEngine.setReverseAmount(reverse);
-    padEngine.setBrightness(brightness);
+    try {
+      await padEngine.updateSettings({ preset: nextPreset });
+      if (padEngine.isPlaying) setPlaying(true);
+    } catch (error) {
+      console.error('Erro ao trocar preset:', error);
+    }
+  };
 
-    setNote(nextNote);
-    setPlaying(true);
-  } catch (error) {
-    console.error('Erro ao tocar pad:', error);
-    setPlaying(false);
-  }
-};
+  const handleOctaveChange = async (nextOctave: number) => {
+    setOctave(nextOctave);
 
-const handlePresetChange = async (nextPreset: PadPresetName) => {
-  setPreset(nextPreset);
-  await padEngine.updateSettings({ preset: nextPreset });
+    try {
+      await padEngine.updateSettings({ octave: nextOctave });
+      if (padEngine.isPlaying) setPlaying(true);
+    } catch (error) {
+      console.error('Erro ao trocar oitava:', error);
+    }
+  };
 
-  if (padEngine.isPlaying) {
-    setPlaying(true);
-  }
-};
+  const handleStructureChange = async (nextStructure: PadStructure) => {
+    setStructure(nextStructure);
 
-const handleOctaveChange = async (nextOctave: number) => {
-  setOctave(nextOctave);
-  await padEngine.updateSettings({ octave: nextOctave });
-
-  if (padEngine.isPlaying) {
-    setPlaying(true);
-  }
-};
-
-const handleStructureChange = async (nextStructure: PadStructure) => {
-  setStructure(nextStructure);
-  await padEngine.updateSettings({ structure: nextStructure });
-
-  if (padEngine.isPlaying) {
-    setPlaying(true);
-  }
-};
+    try {
+      await padEngine.updateSettings({ structure: nextStructure });
+      if (padEngine.isPlaying) setPlaying(true);
+    } catch (error) {
+      console.error('Erro ao trocar estrutura:', error);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-black text-white">
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-3 px-3 pb-5 pt-3 sm:pt-4">
+      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-3 px-3 pb-5 pt-3">
         <section className="rounded-3xl border border-white/10 bg-zinc-900/90 p-3 shadow-2xl">
           <div className="mb-1 flex items-start justify-between gap-3">
             <div>
@@ -107,10 +111,12 @@ const handleStructureChange = async (nextStructure: PadStructure) => {
                   playing ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-400'
                 }`}
               >
-                {statusText}
+                {playing ? 'Tocando' : 'Parado'}
               </p>
               <p className="mt-2 text-xs text-zinc-400">Timbre Base Worship</p>
-              <p className="text-sm font-semibold text-zinc-200">{presets.find((item) => item.value === preset)?.label}</p>
+              <p className="text-sm font-semibold text-zinc-200">
+                {presets.find((item) => item.value === preset)?.label}
+              </p>
             </div>
           </div>
 
@@ -124,6 +130,7 @@ const handleStructureChange = async (nextStructure: PadStructure) => {
         <section className="grid grid-cols-4 gap-2">
           {NOTES.map((n) => {
             const active = note === n && playing;
+
             return (
               <button
                 key={n}
