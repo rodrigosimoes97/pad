@@ -26,10 +26,19 @@ export default function App() {
   const [chorus, setChorus] = useState<number>(0.35);
   const [modulation, setModulation] = useState<number>(0.3);
   const [reverse, setReverse] = useState<number>(0.2);
-  const [brightness, setBrightness] = useState<number>(0.5);
+  const [brightness, setBrightness] = useState<number>(0.55);
 
   const [playing, setPlaying] = useState<boolean>(false);
   const [audioHintVisible, setAudioHintVisible] = useState(true);
+
+  const applyFx = () => {
+    padEngine.setVolume(volume);
+    padEngine.setReverbAmount(reverb);
+    padEngine.setChorusAmount(chorus);
+    padEngine.setModulationAmount(modulation);
+    padEngine.setReverseAmount(reverse);
+    padEngine.setBrightness(brightness);
+  };
 
   const handleNoteTouch = async (nextNote: string) => {
     try {
@@ -45,13 +54,7 @@ export default function App() {
       }
 
       await padEngine.startOrUpdate(nextNote, octave, structure, preset);
-
-      padEngine.setVolume(volume);
-      padEngine.setReverbAmount(reverb);
-      padEngine.setChorusAmount(chorus);
-      padEngine.setModulationAmount(modulation);
-      padEngine.setReverseAmount(reverse);
-      padEngine.setBrightness(brightness);
+      applyFx();
 
       setNote(nextNote);
       setPlaying(true);
@@ -62,33 +65,42 @@ export default function App() {
   };
 
   const handlePresetChange = async (nextPreset: PadPresetName) => {
-    setPreset(nextPreset);
-
     try {
+      setPreset(nextPreset);
       await padEngine.updateSettings({ preset: nextPreset });
-      if (padEngine.isPlaying) setPlaying(true);
+      applyFx();
+
+      if (padEngine.isPlaying) {
+        setPlaying(true);
+      }
     } catch (error) {
       console.error('Erro ao trocar preset:', error);
     }
   };
 
   const handleOctaveChange = async (nextOctave: number) => {
-    setOctave(nextOctave);
-
     try {
+      setOctave(nextOctave);
       await padEngine.updateSettings({ octave: nextOctave });
-      if (padEngine.isPlaying) setPlaying(true);
+      applyFx();
+
+      if (padEngine.isPlaying) {
+        setPlaying(true);
+      }
     } catch (error) {
       console.error('Erro ao trocar oitava:', error);
     }
   };
 
   const handleStructureChange = async (nextStructure: PadStructure) => {
-    setStructure(nextStructure);
-
     try {
+      setStructure(nextStructure);
       await padEngine.updateSettings({ structure: nextStructure });
-      if (padEngine.isPlaying) setPlaying(true);
+      applyFx();
+
+      if (padEngine.isPlaying) {
+        setPlaying(true);
+      }
     } catch (error) {
       console.error('Erro ao trocar estrutura:', error);
     }
