@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { PAD_PRESETS, type PadPresetId } from '../audio/presets';
-import { FLAT_NOTES, SHARP_NOTES, type DisplayMode, type PadStructure, type SharpNote, displayNote } from '../utils/notes';
+import { FLAT_NOTES, SHARP_NOTES, type DisplayMode, type PadStructure, type SharpNote, getDisplayNote  } from '../utils/notes';
 
 type PadControlsProps = {
   note: SharpNote;
