@@ -98,6 +98,14 @@ export class PadEngine {
     return this.playingState ? this.currentSettings.note : null;
   }
 
+  get isPlaying(): boolean {
+    return this.playingState;
+  }
+  
+  get activeNote(): string | null {
+    return this.playingState ? this.currentSettings.note : null;
+  }
+
   private getPresetShape(preset: PadPresetName) {
     if (preset === 'atmospheric') {
       return {
