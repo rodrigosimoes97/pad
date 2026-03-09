@@ -211,11 +211,12 @@ export class PadEngine {
       wet: this.chorusAmount,
     }).start();
 
-    const reverb = new Tone.Reverb({
+   const reverb = new Tone.Reverb({
       decay: 5 + this.reverbAmount * 5 + this.reverseAmount * 2,
       preDelay: 0.02 + this.reverseAmount * 0.14,
       wet: this.reverbAmount,
     });
+    void reverb.generate();
 
     const delay = new Tone.FeedbackDelay({
       delayTime: 0.18 + this.reverseAmount * 0.12,
@@ -311,19 +312,19 @@ export class PadEngine {
     }
   }
 
-  stop(): void {
+   stop(): void {
     if (!this.activeLayer) {
       this.playingState = false;
       return;
     }
-
+  
     const now = Tone.now();
-
+  
     this.activeLayer.gain.gain.cancelScheduledValues(now);
     this.activeLayer.gain.gain.rampTo(0, 0.45);
     this.activeLayer.synthMain.triggerRelease(this.activeLayer.notesMain, now + 0.02);
     this.activeLayer.synthAir.triggerRelease(this.activeLayer.notesAir, now + 0.02);
-
+  
     this.disposeLayer(this.activeLayer);
     this.activeLayer = null;
     this.playingState = false;
