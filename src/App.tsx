@@ -9,14 +9,25 @@ const estruturas: Array<{ value: PadStructure; label: string }> = [
   { value: 'root-fifth-octave', label: '1 + 5 + 8' },
 ];
 
+const presets: Array<{ value: PadPresetName; label: string }> = [
+  { value: 'base', label: 'Base' },
+  { value: 'atmospheric', label: 'Atmosférico' },
+  { value: 'open', label: 'Aberto' },
+];
+
 export default function App() {
   const [note, setNote] = useState<string>('C');
   const [octave, setOctave] = useState<number>(3);
   const [structure, setStructure] = useState<PadStructure>('root');
-  const [preset, setPreset] = useState<PadPresetName>('warm');
-  const [volume, setVolume] = useState<number>(0.7);
-  const [reverb, setReverb] = useState<number>(0.35);
-  const [brightness, setBrightness] = useState<number>(1);
+  const [preset, setPreset] = useState<PadPresetName>('base');
+
+  const [volume, setVolume] = useState<number>(0.72);
+  const [reverb, setReverb] = useState<number>(0.5);
+  const [chorus, setChorus] = useState<number>(0.35);
+  const [modulation, setModulation] = useState<number>(0.3);
+  const [reverse, setReverse] = useState<number>(0.2);
+  const [brightness, setBrightness] = useState<number>(0.5);
+
   const [playing, setPlaying] = useState<boolean>(false);
   const [audioHintVisible, setAudioHintVisible] = useState(true);
 
@@ -68,8 +79,8 @@ export default function App() {
               >
                 {statusText}
               </p>
-              <p className="mt-2 text-xs text-zinc-400">Preset</p>
-              <p className="text-sm font-semibold text-zinc-200">{preset === 'warm' ? 'Warm Pad' : preset === 'soft' ? 'Soft Pad' : preset === 'bright' ? 'Bright Pad' : preset === 'shimmer' ? 'Shimmer Pad' : 'Deep Pad'}</p>
+              <p className="mt-2 text-xs text-zinc-400">Timbre Base Worship</p>
+              <p className="text-sm font-semibold text-zinc-200">{presets.find((item) => item.value === preset)?.label}</p>
             </div>
           </div>
 
@@ -140,17 +151,17 @@ export default function App() {
             </div>
 
             <label className="block text-sm text-zinc-300">
-              Timbre
+              Variação do Timbre Base
               <select
                 className="mt-1 w-full rounded-xl bg-zinc-800 p-2.5"
                 value={preset}
                 onChange={(e) => void handlePresetChange(e.target.value as PadPresetName)}
               >
-                <option value="soft">Soft Pad</option>
-                <option value="warm">Warm Pad</option>
-                <option value="bright">Bright Pad</option>
-                <option value="shimmer">Shimmer Pad</option>
-                <option value="deep">Deep Pad</option>
+                {presets.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
               </select>
             </label>
 
@@ -189,12 +200,63 @@ export default function App() {
             </label>
 
             <label className="block text-sm text-zinc-300">
+              Chorus
+              <input
+                className="mt-1 w-full"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={chorus}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setChorus(v);
+                  padEngine.setChorusAmount(v);
+                }}
+              />
+            </label>
+
+            <label className="block text-sm text-zinc-300">
+              Modulação
+              <input
+                className="mt-1 w-full"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={modulation}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setModulation(v);
+                  padEngine.setModulationAmount(v);
+                }}
+              />
+            </label>
+
+            <label className="block text-sm text-zinc-300">
+              Reverse ambience
+              <input
+                className="mt-1 w-full"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={reverse}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setReverse(v);
+                  padEngine.setReverseAmount(v);
+                }}
+              />
+            </label>
+
+            <label className="block text-sm text-zinc-300">
               Brilho
               <input
                 className="mt-1 w-full"
                 type="range"
-                min="0.5"
-                max="2"
+                min="0"
+                max="1"
                 step="0.01"
                 value={brightness}
                 onChange={(e) => {
