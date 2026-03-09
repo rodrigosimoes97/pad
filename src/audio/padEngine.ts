@@ -99,44 +99,44 @@ export class PadEngine {
   }
 
   private getPresetShape(preset: PadPresetName) {
-    if (preset === 'atmospheric') {
-      return {
-        mainOsc: 'triangle' as const,
-        airOsc: 'sine' as const,
-        attack: 2.1,
-        release: 5.2,
-        filterBase: 1200,
-        mainGain: 0.52,
-        airGain: 0.22,
-      };
-    }
-
-    if (preset === 'open') {
-      return {
-        mainOsc: 'triangle' as const,
-        airOsc: 'triangle' as const,
-        attack: 1.5,
-        release: 4.3,
-        filterBase: 1650,
-        mainGain: 0.5,
-        airGain: 0.18,
-      };
-    }
-
+  if (preset === 'atmospheric') {
     return {
-      mainOsc: 'triangle' as const,
-      airOsc: 'sine' as const,
-      attack: 1.8,
-      release: 4.8,
-      filterBase: 1400,
-      mainGain: 0.54,
-      airGain: 0.2,
+      attack: 2.4,
+      release: 6.2,
+      filterBase: 1500,
+      mainGain: 0.5,
+      airGain: 0.24,
+      mainDetune: 0,
+      airDetune: 7,
     };
   }
 
+  if (preset === 'open') {
+    return {
+      attack: 1.8,
+      release: 5.2,
+      filterBase: 2100,
+      mainGain: 0.5,
+      airGain: 0.18,
+      mainDetune: 0,
+      airDetune: 10,
+    };
+  }
+
+  return {
+    attack: 2.1,
+    release: 5.8,
+    filterBase: 1750,
+    mainGain: 0.54,
+    airGain: 0.22,
+    mainDetune: 0,
+    airDetune: 8,
+  };
+}
+
   private getFilterFrequency(preset: PadPresetName) {
     const shape = this.getPresetShape(preset);
-    return shape.filterBase + this.brightness * 1800;
+    return shape.filterBase + this.brightness * 3200;
   }
 
   private getTargetGain(preset: PadPresetName) {
@@ -174,67 +174,70 @@ export class PadEngine {
     const notesMain = buildNotes(settings.note, settings.octave, settings.structure);
     const notesAir = buildNotes(settings.note, settings.octave + 1, settings.structure);
     const filterFrequency = this.getFilterFrequency(settings.preset);
-
+    
     const synthMain = new Tone.PolySynth(Tone.Synth, {
-      volume: -10,
-      oscillator: { type: shape.mainOsc },
+      volume: -9,
+      oscillator: { type: 'fatsawtooth', count: 3, spread: 22 },
       envelope: {
         attack: shape.attack,
-        decay: 0.2,
-        sustain: 0.94,
+        decay: 0.25,
+        sustain: 0.95,
         release: shape.release,
       },
     });
-
+    
     const synthAir = new Tone.PolySynth(Tone.Synth, {
       volume: -18,
-      oscillator: { type: shape.airOsc },
+      oscillator: { type: 'fatsine', count: 2, spread: 10 },
       envelope: {
-        attack: shape.attack + 0.3,
-        decay: 0.15,
+        attack: shape.attack + 0.4,
+        decay: 0.18,
         sustain: 0.82,
-        release: shape.release + 0.8,
+        release: shape.release + 1.1,
       },
     });
-
+    
+    synthMain.set({ detune: shape.mainDetune });
+    synthAir.set({ detune: shape.airDetune });
+    
     const filter = new Tone.Filter({
       type: 'lowpass',
       frequency: filterFrequency,
-      rolloff: -12,
-      Q: 0.7,
+      rolloff: -24,
+      Q: 0.9,
     });
-
+    
     const chorus = new Tone.Chorus({
-      frequency: 0.5 + this.modulationAmount * 0.8,
-      delayTime: 3.5,
-      depth: 0.2 + this.chorusAmount * 0.55,
-      wet: this.chorusAmount,
+      frequency: 0.2 + this.modulationAmount * 2.2,
+      delayTime: 4.2,
+      depth: 0.3 + this.chorusAmount * 0.6,
+      wet: 0.12 + this.chorusAmount * 0.55,
     }).start();
-
-   const reverb = new Tone.Reverb({
-      decay: 5 + this.reverbAmount * 5 + this.reverseAmount * 2,
-      preDelay: 0.02 + this.reverseAmount * 0.14,
-      wet: this.reverbAmount,
+    
+    const reverb = new Tone.Reverb({
+      decay: 7 + this.reverbAmount * 8 + this.reverseAmount * 3,
+      preDelay: 0.05 + this.reverseAmount * 0.12,
+      wet: 0.18 + this.reverbAmount * 0.55,
     });
     void reverb.generate();
-
+    
     const delay = new Tone.FeedbackDelay({
-      delayTime: 0.18 + this.reverseAmount * 0.12,
-      feedback: 0.08 + this.reverseAmount * 0.18,
-      wet: this.reverseAmount * 0.22,
+      delayTime: 0.24 + this.reverseAmount * 0.22,
+      feedback: 0.18 + this.reverseAmount * 0.34,
+      wet: this.reverseAmount * 0.42,
     });
-
+    
     const gain = new Tone.Gain(0);
-
+    
     synthMain.chain(filter, chorus, reverb, delay, gain, this.masterGain);
     synthAir.chain(filter, chorus, reverb, delay, gain, this.masterGain);
-
+    
     const lfo = new Tone.LFO({
-      frequency: 0.03 + this.modulationAmount * 0.3,
-      min: filterFrequency * (1 - 0.04 - this.modulationAmount * 0.08),
-      max: filterFrequency * (1 + 0.04 + this.modulationAmount * 0.1),
+      frequency: 0.05 + this.modulationAmount * 0.5,
+      min: filterFrequency * (0.62 - this.modulationAmount * 0.04),
+      max: filterFrequency * (1.28 + this.modulationAmount * 0.1),
     });
-
+    
     lfo.connect(filter.frequency);
     lfo.start();
 
@@ -340,42 +343,44 @@ export class PadEngine {
 
   setReverbAmount(value: number): void {
     this.reverbAmount = clamp(value, 0, 1);
-
+  
     if (this.activeLayer) {
-      this.activeLayer.reverb.wet.rampTo(this.reverbAmount, 0.12);
-      this.activeLayer.reverb.decay = 5 + this.reverbAmount * 5 + this.reverseAmount * 2;
+      this.activeLayer.reverb.wet.rampTo(0.18 + this.reverbAmount * 0.55, 0.12);
+      this.activeLayer.reverb.decay = 7 + this.reverbAmount * 8 + this.reverseAmount * 3;
     }
   }
 
   setChorusAmount(value: number): void {
     this.chorusAmount = clamp(value, 0, 1);
-
+  
     if (this.activeLayer) {
-      this.activeLayer.chorus.wet.rampTo(this.chorusAmount, 0.12);
-      this.activeLayer.chorus.depth = 0.2 + this.chorusAmount * 0.55;
+      this.activeLayer.chorus.wet.rampTo(0.12 + this.chorusAmount * 0.55, 0.12);
+      this.activeLayer.chorus.depth = 0.3 + this.chorusAmount * 0.6;
+      this.activeLayer.chorus.frequency.value = 0.2 + this.modulationAmount * 2.2;
     }
   }
 
   setModulationAmount(value: number): void {
     this.modulationAmount = clamp(value, 0, 1);
-
+  
     if (this.activeLayer) {
       const filterFrequency = this.getFilterFrequency(this.currentSettings.preset);
-      this.activeLayer.lfo.frequency.value = 0.03 + this.modulationAmount * 0.3;
-      this.activeLayer.lfo.min = filterFrequency * (1 - 0.04 - this.modulationAmount * 0.08);
-      this.activeLayer.lfo.max = filterFrequency * (1 + 0.04 + this.modulationAmount * 0.1);
+      this.activeLayer.lfo.frequency.value = 0.05 + this.modulationAmount * 0.5;
+      this.activeLayer.lfo.min = filterFrequency * (0.62 - this.modulationAmount * 0.04);
+      this.activeLayer.lfo.max = filterFrequency * (1.28 + this.modulationAmount * 0.1);
+      this.activeLayer.chorus.frequency.value = 0.2 + this.modulationAmount * 2.2;
     }
   }
 
   setReverseAmount(value: number): void {
     this.reverseAmount = clamp(value, 0, 1);
-
+  
     if (this.activeLayer) {
-      this.activeLayer.delay.wet.rampTo(this.reverseAmount * 0.22, 0.12);
-      this.activeLayer.delay.feedback.rampTo(0.08 + this.reverseAmount * 0.18, 0.12);
-      this.activeLayer.delay.delayTime.rampTo(0.18 + this.reverseAmount * 0.12, 0.12);
-      this.activeLayer.reverb.preDelay = 0.02 + this.reverseAmount * 0.14;
-      this.activeLayer.reverb.decay = 5 + this.reverbAmount * 5 + this.reverseAmount * 2;
+      this.activeLayer.delay.wet.rampTo(this.reverseAmount * 0.42, 0.12);
+      this.activeLayer.delay.feedback.rampTo(0.18 + this.reverseAmount * 0.34, 0.12);
+      this.activeLayer.delay.delayTime.rampTo(0.24 + this.reverseAmount * 0.22, 0.12);
+      this.activeLayer.reverb.preDelay = 0.05 + this.reverseAmount * 0.12;
+      this.activeLayer.reverb.decay = 7 + this.reverbAmount * 8 + this.reverseAmount * 3;
     }
   }
 
