@@ -38,7 +38,7 @@ export default function App() {
     await padEngine.ensureStartedFromGesture();
     setAudioHintVisible(false);
 
-    const sameNotePlaying = playing && note === nextNote;
+    const sameNotePlaying = padEngine.isPlaying && padEngine.activeNote === nextNote;
 
     if (sameNotePlaying) {
       padEngine.stop();
@@ -65,43 +65,28 @@ export default function App() {
 
 const handlePresetChange = async (nextPreset: PadPresetName) => {
   setPreset(nextPreset);
+  await padEngine.updateSettings({ preset: nextPreset });
 
-  if (playing) {
-    await padEngine.startOrUpdate(note, octave, structure, nextPreset);
-    padEngine.setVolume(volume);
-    padEngine.setReverbAmount(reverb);
-    padEngine.setChorusAmount(chorus);
-    padEngine.setModulationAmount(modulation);
-    padEngine.setReverseAmount(reverse);
-    padEngine.setBrightness(brightness);
+  if (padEngine.isPlaying) {
+    setPlaying(true);
   }
 };
 
- const handleOctaveChange = async (nextOctave: number) => {
+const handleOctaveChange = async (nextOctave: number) => {
   setOctave(nextOctave);
+  await padEngine.updateSettings({ octave: nextOctave });
 
-  if (playing) {
-    await padEngine.startOrUpdate(note, nextOctave, structure, preset);
-    padEngine.setVolume(volume);
-    padEngine.setReverbAmount(reverb);
-    padEngine.setChorusAmount(chorus);
-    padEngine.setModulationAmount(modulation);
-    padEngine.setReverseAmount(reverse);
-    padEngine.setBrightness(brightness);
+  if (padEngine.isPlaying) {
+    setPlaying(true);
   }
 };
 
-  const handleStructureChange = async (nextStructure: PadStructure) => {
+const handleStructureChange = async (nextStructure: PadStructure) => {
   setStructure(nextStructure);
+  await padEngine.updateSettings({ structure: nextStructure });
 
-  if (playing) {
-    await padEngine.startOrUpdate(note, octave, nextStructure, preset);
-    padEngine.setVolume(volume);
-    padEngine.setReverbAmount(reverb);
-    padEngine.setChorusAmount(chorus);
-    padEngine.setModulationAmount(modulation);
-    padEngine.setReverseAmount(reverse);
-    padEngine.setBrightness(brightness);
+  if (padEngine.isPlaying) {
+    setPlaying(true);
   }
 };
 
@@ -142,7 +127,7 @@ const handlePresetChange = async (nextPreset: PadPresetName) => {
             return (
               <button
                 key={n}
-                onClick={() => void handleNoteTouch(n)}
+                onPointerDown={() => void handleNoteTouch(n)}
                 className={`h-16 rounded-2xl border text-lg font-black shadow-lg transition active:scale-[0.98] ${
                   active
                     ? 'border-cyan-200 bg-cyan-300 text-black shadow-[0_0_28px_rgba(34,211,238,0.42)]'
