@@ -2,9 +2,10 @@ import * as Tone from 'tone';
 
 export type PadStructure = 'root' | 'root-fifth' | 'root-fifth-octave';
 export type PadPresetName = 'soft' | 'warm' | 'bright';
+type PadOscillator = 'sine' | 'triangle' | 'sawtooth';
 
 type PadPresetConfig = {
-  oscillator: Tone.ToneOscillatorType;
+  oscillator: PadOscillator;
   filterFrequency: number;
   filterQ: number;
   chorusFrequency: number;
@@ -126,14 +127,22 @@ export class PadEngine {
   private gain: Tone.Gain | null = null;
   private limiter: Tone.Limiter | null = null;
 
-  private isInitialized = false;
-  private isPlaying = false;
+  private initialized = false;
+  private playingState = false;
   private currentNotes: string[] = [];
   private currentVolume = 0.7;
   private currentPreset: PadPresetName = 'soft';
 
+  get isPlaying(): boolean {
+    return this.playingState;
+  }
+
+  get activeNotes(): string[] {
+    return [...this.currentNotes];
+  }
+
   async init(): Promise<void> {
-    if (this.isInitialized) return;
+    if (this.initialized) return;
 
     await Tone.start();
 
@@ -161,9 +170,6 @@ export class PadEngine {
     this.limiter = new Tone.Limiter(-3);
 
     this.synth = new Tone.PolySynth(Tone.Synth, {
-      oscillator: {
-        type: 'sine',
-      },
       envelope: {
         attack: 1.6,
         decay: 0.3,
@@ -173,17 +179,24 @@ export class PadEngine {
       volume: -8,
     });
 
-    this.synth.chain(this.filter, this.chorus, this.reverb, this.gain, this.limiter, Tone.Destination);
+    this.synth.chain(
+      this.filter,
+      this.chorus,
+      this.reverb,
+      this.gain,
+      this.limiter,
+      Tone.Destination
+    );
 
     this.applyPreset(this.currentPreset);
     this.setVolume(this.currentVolume);
 
-    this.isInitialized = true;
+    this.initialized = true;
   }
 
   private ensureInitialized(): void {
     if (
-      !this.isInitialized ||
+      !this.initialized ||
       !this.synth ||
       !this.filter ||
       !this.chorus ||
@@ -225,8 +238,7 @@ export class PadEngine {
     this.reverb.decay = preset.reverbDecay;
     this.reverb.wet.rampTo(preset.reverbWet, 0.2);
 
-    const targetGain = this.currentVolume * preset.gain;
-    this.gain.gain.rampTo(targetGain, 0.2);
+    this.gain.gain.rampTo(this.currentVolume * preset.gain, 0.2);
   }
 
   setVolume(volume: number): void {
@@ -238,7 +250,12 @@ export class PadEngine {
     this.gain.gain.rampTo(this.currentVolume * preset.gain, 0.15);
   }
 
-  async start(note: string, octave: number, structure: PadStructure, preset: PadPresetName): Promise<void> {
+  async start(
+    note: string,
+    octave: number,
+    structure: PadStructure,
+    preset: PadPresetName
+  ): Promise<void> {
     await this.init();
     this.ensureInitialized();
 
@@ -246,28 +263,33 @@ export class PadEngine {
 
     this.applyPreset(preset);
 
-    if (this.isPlaying && this.currentNotes.length > 0) {
+    if (this.playingState && this.currentNotes.length > 0) {
       this.synth!.triggerRelease(this.currentNotes, Tone.now());
     }
 
     this.currentNotes = notes;
     this.synth!.triggerAttack(notes, Tone.now());
-    this.isPlaying = true;
+    this.playingState = true;
   }
 
-  async update(note: string, octave: number, structure: PadStructure, preset: PadPresetName): Promise<void> {
+  async startOrUpdate(
+    note: string,
+    octave: number,
+    structure: PadStructure,
+    preset: PadPresetName
+  ): Promise<void> {
     await this.start(note, octave, structure, preset);
   }
 
   stop(): void {
-    if (!this.synth || !this.isPlaying) return;
+    if (!this.synth || !this.playingState) return;
 
     if (this.currentNotes.length > 0) {
       this.synth.triggerRelease(this.currentNotes, Tone.now());
     }
 
     this.currentNotes = [];
-    this.isPlaying = false;
+    this.playingState = false;
   }
 
   panic(): void {
@@ -280,22 +302,14 @@ export class PadEngine {
     }
 
     this.currentNotes = [];
-    this.isPlaying = false;
+    this.playingState = false;
 
-    setTimeout(() => {
+    window.setTimeout(() => {
       if (this.gain) {
         const preset = PAD_PRESETS[this.currentPreset];
         this.gain.gain.rampTo(this.currentVolume * preset.gain, 0.1);
       }
     }, 80);
-  }
-
-  get playing(): boolean {
-    return this.isPlaying;
-  }
-
-  get activeNotes(): string[] {
-    return [...this.currentNotes];
   }
 }
 
