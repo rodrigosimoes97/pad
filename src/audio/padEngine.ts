@@ -1,31 +1,134 @@
 import * as Tone from 'tone';
 
 export type PadStructure = 'root' | 'root-fifth' | 'root-fifth-octave';
-export type PadPresetName = 'base' | 'atmospheric' | 'open';
+export type PadPresetName = 'soft' | 'warm' | 'bright' | 'shimmer' | 'deep';
 
-type PadSettings = {
+export type PadSettings = {
   note: string;
   octave: number;
   structure: PadStructure;
   preset: PadPresetName;
 };
 
-type PadLayer = {
-  synthMain: Tone.PolySynth<Tone.Synth>;
-  synthAir: Tone.PolySynth<Tone.Synth>;
-  filter: Tone.Filter;
-  chorus: Tone.Chorus;
-  reverb: Tone.Reverb;
-  delay: Tone.FeedbackDelay;
-  gain: Tone.Gain;
-  lfo: Tone.LFO;
-  notesMain: string[];
-  notesAir: string[];
+type OscType = 'sine' | 'triangle' | 'sawtooth';
+
+type Preset = {
+  oscillator: OscType;
+  attack: number;
+  release: number;
+  filterFrequency: number;
+  filterQ: number;
+  chorusWet: number;
+  chorusFrequency: number;
+  reverbWet: number;
+  reverbRoomSize: number;
+  gain: number;
+  layerDetune: number;
+  layerGain: number;
+  modFilterDepth: number;
+  modAmpDepth: number;
+  modRate: number;
 };
 
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
+type Layer = {
+  synth: Tone.PolySynth<Tone.Synth>;
+  shimmerSynth?: Tone.PolySynth<Tone.Synth>;
+  filter: Tone.Filter;
+  chorus: Tone.Chorus;
+  reverb: Tone.JCReverb;
+  gain: Tone.Gain;
+  filterLfo: Tone.LFO;
+  ampLfo: Tone.LFO;
+  notes: string[];
+};
+
+const PRESETS: Record<PadPresetName, Preset> = {
+  soft: {
+    oscillator: 'sine',
+    attack: 1.9,
+    release: 3.1,
+    filterFrequency: 1100,
+    filterQ: 0.7,
+    chorusWet: 0.2,
+    chorusFrequency: 0.9,
+    reverbWet: 0.36,
+    reverbRoomSize: 0.72,
+    gain: 0.52,
+    layerDetune: 3,
+    layerGain: 0,
+    modFilterDepth: 90,
+    modAmpDepth: 0.015,
+    modRate: 0.06,
+  },
+  warm: {
+    oscillator: 'triangle',
+    attack: 1.5,
+    release: 3.4,
+    filterFrequency: 1350,
+    filterQ: 0.9,
+    chorusWet: 0.24,
+    chorusFrequency: 1,
+    reverbWet: 0.4,
+    reverbRoomSize: 0.78,
+    gain: 0.58,
+    layerDetune: 5,
+    layerGain: 0.3,
+    modFilterDepth: 130,
+    modAmpDepth: 0.02,
+    modRate: 0.055,
+  },
+  bright: {
+    oscillator: 'sawtooth',
+    attack: 1.1,
+    release: 2.4,
+    filterFrequency: 1800,
+    filterQ: 1,
+    chorusWet: 0.14,
+    chorusFrequency: 1.4,
+    reverbWet: 0.3,
+    reverbRoomSize: 0.64,
+    gain: 0.42,
+    layerDetune: 1,
+    layerGain: 0,
+    modFilterDepth: 55,
+    modAmpDepth: 0.008,
+    modRate: 0.07,
+  },
+  shimmer: {
+    oscillator: 'sine',
+    attack: 2.4,
+    release: 4.8,
+    filterFrequency: 2400,
+    filterQ: 0.45,
+    chorusWet: 0.34,
+    chorusFrequency: 0.65,
+    reverbWet: 0.62,
+    reverbRoomSize: 0.92,
+    gain: 0.5,
+    layerDetune: 10,
+    layerGain: 0.42,
+    modFilterDepth: 220,
+    modAmpDepth: 0.025,
+    modRate: 0.042,
+  },
+  deep: {
+    oscillator: 'triangle',
+    attack: 1.7,
+    release: 3.8,
+    filterFrequency: 780,
+    filterQ: 1,
+    chorusWet: 0.11,
+    chorusFrequency: 0.7,
+    reverbWet: 0.3,
+    reverbRoomSize: 0.7,
+    gain: 0.62,
+    layerDetune: 2,
+    layerGain: 0,
+    modFilterDepth: 45,
+    modAmpDepth: 0.006,
+    modRate: 0.04,
+  },
+};
 
 function getMidi(note: string, octave: number): number {
   const map: Record<string, number> = {
@@ -43,7 +146,9 @@ function getMidi(note: string, octave: number): number {
     B: 11,
   };
 
-  return (octave + 1) * 12 + map[note];
+  const semitone = map[note];
+  if (semitone === undefined) throw new Error(`Invalid note: ${note}`);
+  return (octave + 1) * 12 + semitone;
 }
 
 function midiToNoteName(midi: number): string {
@@ -53,40 +158,30 @@ function midiToNoteName(midi: number): string {
   return `${note}${octave}`;
 }
 
-function buildNotes(note: string, octave: number, structure: PadStructure): string[] {
+function buildPadNotes(note: string, octave: number, structure: PadStructure): string[] {
   const root = getMidi(note, octave);
-
-  if (structure === 'root') {
-    return [midiToNoteName(root)];
-  }
-
-  if (structure === 'root-fifth') {
-    return [midiToNoteName(root), midiToNoteName(root + 7)];
-  }
-
+  if (structure === 'root') return [midiToNoteName(root)];
+  if (structure === 'root-fifth') return [midiToNoteName(root), midiToNoteName(root + 7)];
   return [midiToNoteName(root), midiToNoteName(root + 7), midiToNoteName(root + 12)];
 }
 
 export class PadEngine {
   private initialized = false;
-  private unlocked = false;
+  private activeLayer: Layer | null = null;
   private playingState = false;
+  private audioUnlocked = false;
 
   private currentSettings: PadSettings = {
     note: 'C',
     octave: 3,
     structure: 'root',
-    preset: 'base',
+    preset: 'warm',
   };
 
-  private volume = 0.72;
-  private reverbAmount = 0.5;
-  private chorusAmount = 0.35;
-  private modulationAmount = 0.3;
-  private reverseAmount = 0.2;
-  private brightness = 0.55;
+  private volume = 0.7;
+  private reverbAmount = 0.35;
+  private brightness = 1;
 
-  private activeLayer: PadLayer | null = null;
   private masterGain: Tone.Gain | null = null;
   private limiter: Tone.Limiter | null = null;
 
@@ -94,305 +189,222 @@ export class PadEngine {
     return this.playingState;
   }
 
-  get activeNote(): string | null {
-    return this.playingState ? this.currentSettings.note : null;
+  get settings(): PadSettings {
+    return this.currentSettings;
   }
 
-  private getPresetShape(preset: PadPresetName) {
-  if (preset === 'atmospheric') {
-    return {
-      attack: 2.4,
-      release: 6.2,
-      filterBase: 1500,
-      mainGain: 0.5,
-      airGain: 0.24,
-      mainDetune: 0,
-      airDetune: 7,
-    };
-  }
-
-  if (preset === 'open') {
-    return {
-      attack: 1.8,
-      release: 5.2,
-      filterBase: 2100,
-      mainGain: 0.5,
-      airGain: 0.18,
-      mainDetune: 0,
-      airDetune: 10,
-    };
-  }
-
-  return {
-    attack: 2.1,
-    release: 5.8,
-    filterBase: 1750,
-    mainGain: 0.54,
-    airGain: 0.22,
-    mainDetune: 0,
-    airDetune: 8,
-  };
-}
-
-  private getFilterFrequency(preset: PadPresetName) {
-    const shape = this.getPresetShape(preset);
-    return shape.filterBase + this.brightness * 3200;
-  }
-
-  private getTargetGain(preset: PadPresetName) {
-    const shape = this.getPresetShape(preset);
-    return this.volume * (shape.mainGain + shape.airGain * 0.4);
-  }
-
-  private async initIfNeeded() {
-    if (this.initialized) return;
-
-    this.masterGain = new Tone.Gain(0.9);
-    this.limiter = new Tone.Limiter(-2);
-
-    this.masterGain.connect(this.limiter);
-    this.limiter.toDestination();
-
-    this.initialized = true;
+  get isAudioUnlocked(): boolean {
+    return this.audioUnlocked;
   }
 
   async ensureStartedFromGesture(): Promise<void> {
-    await this.initIfNeeded();
-
-    if (!this.unlocked) {
-      await Tone.start();
-      this.unlocked = true;
+    if (!this.initialized) {
+      this.masterGain = new Tone.Gain(0.8);
+      this.limiter = new Tone.Limiter(-2);
+      this.masterGain.connect(this.limiter);
+      this.limiter.toDestination();
+      this.initialized = true;
     }
+
+    await Tone.start();
+    await Tone.getContext().resume();
+
+    if (!this.audioUnlocked) {
+      const warmup = new Tone.Oscillator(440, 'sine').start();
+      const gain = new Tone.Gain(0).toDestination();
+      warmup.connect(gain);
+      warmup.stop('+0.02');
+      window.setTimeout(() => {
+        warmup.dispose();
+        gain.dispose();
+      }, 60);
+    }
+
+    this.audioUnlocked = true;
   }
 
-  private createLayer(settings: PadSettings): PadLayer {
-    if (!this.masterGain) {
-      throw new Error('Audio engine not initialized');
+  private requireMaster(): Tone.Gain {
+    if (!this.masterGain || !this.limiter) {
+      throw new Error('PadEngine not initialized. Call ensureStartedFromGesture() first.');
     }
+    return this.masterGain;
+  }
 
-    const shape = this.getPresetShape(settings.preset);
-    const notesMain = buildNotes(settings.note, settings.octave, settings.structure);
-    const notesAir = buildNotes(settings.note, settings.octave + 1, settings.structure);
-    const filterFrequency = this.getFilterFrequency(settings.preset);
-    
-    const synthMain = new Tone.PolySynth(Tone.Synth, {
+  private createLayer(settings: PadSettings): Layer {
+    const masterGain = this.requireMaster();
+    const preset = PRESETS[settings.preset];
+    const notes = buildPadNotes(settings.note, settings.octave, settings.structure);
+
+    const synth = new Tone.PolySynth(Tone.Synth, {
       volume: -9,
-      oscillator: { type: 'fatsawtooth', count: 3, spread: 22 },
+      oscillator: { type: preset.oscillator },
       envelope: {
-        attack: shape.attack,
-        decay: 0.25,
-        sustain: 0.95,
-        release: shape.release,
+        attack: preset.attack,
+        decay: 0.4,
+        sustain: 0.9,
+        release: preset.release,
       },
     });
-    
-    const synthAir = new Tone.PolySynth(Tone.Synth, {
-      volume: -18,
-      oscillator: { type: 'fatsine', count: 2, spread: 10 },
-      envelope: {
-        attack: shape.attack + 0.4,
-        decay: 0.18,
-        sustain: 0.82,
-        release: shape.release + 1.1,
-      },
-    });
-    
-    synthMain.set({ detune: shape.mainDetune });
-    synthAir.set({ detune: shape.airDetune });
-    
+
+    const shimmerSynth = preset.layerGain > 0
+      ? new Tone.PolySynth(Tone.Synth, {
+          volume: -13,
+          oscillator: { type: 'triangle' },
+          detune: preset.layerDetune,
+          envelope: {
+            attack: preset.attack + 0.4,
+            decay: 0.3,
+            sustain: 0.86,
+            release: preset.release + 0.8,
+          },
+        })
+      : undefined;
+
     const filter = new Tone.Filter({
       type: 'lowpass',
-      frequency: filterFrequency,
-      rolloff: -24,
-      Q: 0.9,
+      frequency: preset.filterFrequency * this.brightness,
+      rolloff: -12,
+      Q: preset.filterQ,
     });
-    
-    const chorus = new Tone.Chorus({
-      frequency: 0.2 + this.modulationAmount * 2.2,
-      delayTime: 4.2,
-      depth: 0.3 + this.chorusAmount * 0.6,
-      wet: 0.12 + this.chorusAmount * 0.55,
-    }).start();
-    
-    const reverb = new Tone.Reverb({
-      decay: 7 + this.reverbAmount * 8 + this.reverseAmount * 3,
-      preDelay: 0.05 + this.reverseAmount * 0.12,
-      wet: 0.18 + this.reverbAmount * 0.55,
-    });
-    void reverb.generate();
-    
-    const delay = new Tone.FeedbackDelay({
-      delayTime: 0.24 + this.reverseAmount * 0.22,
-      feedback: 0.18 + this.reverseAmount * 0.34,
-      wet: this.reverseAmount * 0.42,
-    });
-    
-    const gain = new Tone.Gain(0);
-    
-    synthMain.chain(filter, chorus, reverb, delay, gain, this.masterGain);
-    synthAir.chain(filter, chorus, reverb, delay, gain, this.masterGain);
-    
-    const lfo = new Tone.LFO({
-      frequency: 0.05 + this.modulationAmount * 0.5,
-      min: filterFrequency * (0.62 - this.modulationAmount * 0.04),
-      max: filterFrequency * (1.28 + this.modulationAmount * 0.1),
-    });
-    
-    lfo.connect(filter.frequency);
-    lfo.start();
 
-    return {
-      synthMain,
-      synthAir,
-      filter,
-      chorus,
-      reverb,
-      delay,
-      gain,
-      lfo,
-      notesMain,
-      notesAir,
-    };
+    const chorus = new Tone.Chorus({
+      frequency: preset.chorusFrequency,
+      delayTime: 4.2,
+      depth: 0.44,
+      spread: 160,
+      wet: preset.chorusWet,
+    }).start();
+
+    const reverb = new Tone.JCReverb({
+      roomSize: preset.reverbRoomSize,
+      wet: Math.min(1, preset.reverbWet * (this.reverbAmount / 0.35)),
+    });
+
+    const gain = new Tone.Gain(0);
+    const filterBase = preset.filterFrequency * this.brightness;
+    const filterLfo = new Tone.LFO({
+      frequency: preset.modRate,
+      min: Math.max(250, filterBase - preset.modFilterDepth),
+      max: filterBase + preset.modFilterDepth,
+    }).start();
+
+    const baseGain = this.getTargetGain(settings.preset);
+    const ampLfo = new Tone.LFO({
+      frequency: preset.modRate * 0.7,
+      min: Math.max(0, baseGain * (1 - preset.modAmpDepth)),
+      max: baseGain * (1 + preset.modAmpDepth),
+    }).start();
+
+    synth.chain(filter, chorus, reverb, gain, masterGain);
+    shimmerSynth?.chain(filter, chorus, reverb, gain, masterGain);
+    filterLfo.connect(filter.frequency);
+    ampLfo.connect(gain.gain);
+
+    return { synth, shimmerSynth, filter, chorus, reverb, gain, filterLfo, ampLfo, notes };
   }
 
-  private disposeLayer(layer: PadLayer, delayMs = 1400) {
+  private getTargetGain(preset: PadPresetName): number {
+    return this.volume * PRESETS[preset].gain;
+  }
+
+  private disposeLayer(layer: Layer, delayMs = 1200): void {
     window.setTimeout(() => {
-      layer.lfo.dispose();
-      layer.synthMain.dispose();
-      layer.synthAir.dispose();
+      layer.synth.dispose();
+      layer.shimmerSynth?.dispose();
       layer.filter.dispose();
       layer.chorus.dispose();
       layer.reverb.dispose();
-      layer.delay.dispose();
       layer.gain.dispose();
+      layer.filterLfo.dispose();
+      layer.ampLfo.dispose();
     }, delayMs);
   }
 
-  async startOrUpdate(
-    note: string,
-    octave: number,
-    structure: PadStructure,
-    preset: PadPresetName
-  ): Promise<void> {
+  private async startPad(settings: PadSettings): Promise<void> {
     await this.ensureStartedFromGesture();
 
-    const nextSettings: PadSettings = { note, octave, structure, preset };
-    const nextLayer = this.createLayer(nextSettings);
+    const layer = this.createLayer(settings);
     const now = Tone.now();
 
-    nextLayer.synthMain.triggerAttack(nextLayer.notesMain, now);
-    nextLayer.synthAir.triggerAttack(nextLayer.notesAir, now);
+    layer.synth.triggerAttack(layer.notes, now);
+    layer.shimmerSynth?.triggerAttack(layer.notes, now + 0.02);
 
-    nextLayer.gain.gain.setValueAtTime(0, now);
-    nextLayer.gain.gain.rampTo(this.getTargetGain(preset), 0.35);
+    layer.gain.gain.setValueAtTime(0, now);
+    layer.gain.gain.linearRampToValueAtTime(this.getTargetGain(settings.preset), now + 0.28);
 
     if (this.activeLayer) {
       this.activeLayer.gain.gain.cancelScheduledValues(now);
-      this.activeLayer.gain.gain.rampTo(0, 0.35);
-      this.activeLayer.synthMain.triggerRelease(this.activeLayer.notesMain, now + 0.02);
-      this.activeLayer.synthAir.triggerRelease(this.activeLayer.notesAir, now + 0.02);
+      this.activeLayer.gain.gain.linearRampToValueAtTime(0, now + 0.28);
+      this.activeLayer.synth.triggerRelease(this.activeLayer.notes, now + 0.06);
+      this.activeLayer.shimmerSynth?.triggerRelease(this.activeLayer.notes, now + 0.06);
       this.disposeLayer(this.activeLayer);
     }
 
-    this.activeLayer = nextLayer;
-    this.currentSettings = nextSettings;
+    this.activeLayer = layer;
+    this.currentSettings = settings;
     this.playingState = true;
   }
 
-  async updateSettings(partial: Partial<PadSettings>): Promise<void> {
-    this.currentSettings = {
-      ...this.currentSettings,
-      ...partial,
-    };
+  async toggleOrSwitchPad(note: string): Promise<boolean> {
+    await this.ensureStartedFromGesture();
+
+    if (this.playingState && this.currentSettings.note === note) {
+      this.stop();
+      return false;
+    }
+
+    await this.startPad({ ...this.currentSettings, note });
+    return true;
+  }
+
+  async updateSettings(nextSettings: Partial<PadSettings>): Promise<void> {
+    const merged = { ...this.currentSettings, ...nextSettings };
+    this.currentSettings = merged;
 
     if (this.playingState) {
-      await this.startOrUpdate(
-        this.currentSettings.note,
-        this.currentSettings.octave,
-        this.currentSettings.structure,
-        this.currentSettings.preset
-      );
+      await this.startPad(merged);
     }
   }
 
-   stop(): void {
-    if (!this.activeLayer) {
-      this.playingState = false;
-      return;
-    }
-  
+  stop(): void {
+    if (!this.activeLayer || !this.playingState) return;
+
     const now = Tone.now();
-  
     this.activeLayer.gain.gain.cancelScheduledValues(now);
-    this.activeLayer.gain.gain.rampTo(0, 0.45);
-    this.activeLayer.synthMain.triggerRelease(this.activeLayer.notesMain, now + 0.02);
-    this.activeLayer.synthAir.triggerRelease(this.activeLayer.notesAir, now + 0.02);
-  
+    this.activeLayer.gain.gain.linearRampToValueAtTime(0, now + 0.35);
+    this.activeLayer.synth.triggerRelease(this.activeLayer.notes, now + 0.04);
+    this.activeLayer.shimmerSynth?.triggerRelease(this.activeLayer.notes, now + 0.04);
     this.disposeLayer(this.activeLayer);
+
     this.activeLayer = null;
     this.playingState = false;
   }
 
   setVolume(value: number): void {
-    this.volume = clamp(value, 0, 1);
-
-    if (this.activeLayer) {
-      this.activeLayer.gain.gain.rampTo(this.getTargetGain(this.currentSettings.preset), 0.12);
-    }
+    this.volume = Math.max(0, Math.min(1, value));
+    if (!this.activeLayer) return;
+    this.activeLayer.gain.gain.rampTo(this.getTargetGain(this.currentSettings.preset), 0.14);
   }
 
   setReverbAmount(value: number): void {
-    this.reverbAmount = clamp(value, 0, 1);
-  
-    if (this.activeLayer) {
-      this.activeLayer.reverb.wet.rampTo(0.18 + this.reverbAmount * 0.55, 0.12);
-      this.activeLayer.reverb.decay = 7 + this.reverbAmount * 8 + this.reverseAmount * 3;
-    }
-  }
-
-  setChorusAmount(value: number): void {
-    this.chorusAmount = clamp(value, 0, 1);
-  
-    if (this.activeLayer) {
-      this.activeLayer.chorus.wet.rampTo(0.12 + this.chorusAmount * 0.55, 0.12);
-      this.activeLayer.chorus.depth = 0.3 + this.chorusAmount * 0.6;
-      this.activeLayer.chorus.frequency.value = 0.2 + this.modulationAmount * 2.2;
-    }
-  }
-
-  setModulationAmount(value: number): void {
-    this.modulationAmount = clamp(value, 0, 1);
-  
-    if (this.activeLayer) {
-      const filterFrequency = this.getFilterFrequency(this.currentSettings.preset);
-      this.activeLayer.lfo.frequency.value = 0.05 + this.modulationAmount * 0.5;
-      this.activeLayer.lfo.min = filterFrequency * (0.62 - this.modulationAmount * 0.04);
-      this.activeLayer.lfo.max = filterFrequency * (1.28 + this.modulationAmount * 0.1);
-      this.activeLayer.chorus.frequency.value = 0.2 + this.modulationAmount * 2.2;
-    }
-  }
-
-  setReverseAmount(value: number): void {
-    this.reverseAmount = clamp(value, 0, 1);
-  
-    if (this.activeLayer) {
-      this.activeLayer.delay.wet.rampTo(this.reverseAmount * 0.42, 0.12);
-      this.activeLayer.delay.feedback.rampTo(0.18 + this.reverseAmount * 0.34, 0.12);
-      this.activeLayer.delay.delayTime.rampTo(0.24 + this.reverseAmount * 0.22, 0.12);
-      this.activeLayer.reverb.preDelay = 0.05 + this.reverseAmount * 0.12;
-      this.activeLayer.reverb.decay = 7 + this.reverbAmount * 8 + this.reverseAmount * 3;
-    }
+    this.reverbAmount = Math.max(0, Math.min(1, value));
+    if (!this.activeLayer) return;
+    const preset = PRESETS[this.currentSettings.preset];
+    this.activeLayer.reverb.wet.rampTo(
+      Math.min(1, preset.reverbWet * (this.reverbAmount / 0.35)),
+      0.15
+    );
   }
 
   setBrightness(value: number): void {
-    this.brightness = clamp(value, 0, 1);
+    this.brightness = Math.max(0.5, Math.min(2, value));
+    if (!this.activeLayer) return;
 
-    if (this.activeLayer) {
-      this.activeLayer.filter.frequency.rampTo(
-        this.getFilterFrequency(this.currentSettings.preset),
-        0.12
-      );
-    }
+    const preset = PRESETS[this.currentSettings.preset];
+    const target = preset.filterFrequency * this.brightness;
+    this.activeLayer.filter.frequency.rampTo(target, 0.16);
+    this.activeLayer.filterLfo.min = Math.max(250, target - preset.modFilterDepth);
+    this.activeLayer.filterLfo.max = target + preset.modFilterDepth;
   }
 }
 
