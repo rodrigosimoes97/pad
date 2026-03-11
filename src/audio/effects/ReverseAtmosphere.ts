@@ -114,15 +114,17 @@ export class ReverseAtmosphere {
 
   triggerDebugPulse() {
     const now = Tone.now();
-    const osc = new Tone.Oscillator({ type: 'triangle', frequency: 540, volume: -8 });
+    const osc = new Tone.Oscillator({ type: 'sawtooth', frequency: 420, volume: -2 });
     const gain = new Tone.Gain(0);
     osc.connect(gain);
     gain.connect(this.input);
+  
     osc.start(now);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.85, now + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
-    osc.stop(now + 0.45);
+    gain.gain.exponentialRampToValueAtTime(1.0, now + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.75);
+  
+    osc.stop(now + 0.8);
     osc.onstop = () => {
       osc.dispose();
       gain.dispose();
