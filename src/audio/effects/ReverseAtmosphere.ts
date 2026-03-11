@@ -28,7 +28,8 @@ type ActiveSource = {
 };
 
 export class ReverseAtmosphere {
-  private readonly ctx: AudioContext;
+  private readonly ctx: BaseAudioContext;
+  private readonly liveCtx: AudioContext;
   private readonly input: GainNode;
   private readonly captureTap: GainNode;
   private readonly captureProcessor: ScriptProcessorNode;
@@ -66,52 +67,58 @@ export class ReverseAtmosphere {
   private activeSources = new Set<ActiveSource>();
 
   constructor() {
-    this.ctx = Tone.getContext().rawContext;
+    const raw = Tone.getContext().rawContext;
+    if (!(raw instanceof AudioContext)) {
+      throw new Error('ReverseAtmosphere requires a live AudioContext');
+    }
 
-    this.input = this.ctx.createGain();
+    this.liveCtx = raw;
+    this.ctx = raw;
+
+    this.input = this.liveCtx.createGain();
     this.input.gain.value = 1;
 
-    this.captureTap = this.ctx.createGain();
+    this.captureTap = this.liveCtx.createGain();
     this.captureTap.gain.value = 1;
 
-    this.captureProcessor = this.ctx.createScriptProcessor(1024, 2, 2);
-    this.captureSilentGain = this.ctx.createGain();
+    this.captureProcessor = this.liveCtx.createScriptProcessor(1024, 2, 2);
+    this.captureSilentGain = this.liveCtx.createGain();
     this.captureSilentGain.gain.value = 0;
 
-    this.output = this.ctx.createGain();
+    this.output = this.liveCtx.createGain();
     this.output.gain.value = 0;
 
-    this.wetGain = this.ctx.createGain();
+    this.wetGain = this.liveCtx.createGain();
     this.wetGain.gain.value = 0;
 
-    this.hp = this.ctx.createBiquadFilter();
+    this.hp = this.liveCtx.createBiquadFilter();
     this.hp.type = 'highpass';
     this.hp.frequency.value = 150;
     this.hp.Q.value = 0.22;
 
-    this.lp = this.ctx.createBiquadFilter();
+    this.lp = this.liveCtx.createBiquadFilter();
     this.lp.type = 'lowpass';
     this.lp.frequency.value = 3600;
     this.lp.Q.value = 0.25;
 
-    this.preDelay = this.ctx.createDelay(1.5);
+    this.preDelay = this.liveCtx.createDelay(1.5);
     this.preDelay.delayTime.value = PRE_DELAY_TIMES.medium;
 
-    this.splitter = this.ctx.createChannelSplitter(2);
-    this.merger = this.ctx.createChannelMerger(2);
-    this.leftDirect = this.ctx.createGain();
-    this.leftCross = this.ctx.createGain();
-    this.rightDirect = this.ctx.createGain();
-    this.rightCross = this.ctx.createGain();
+    this.splitter = this.liveCtx.createChannelSplitter(2);
+    this.merger = this.liveCtx.createChannelMerger(2);
+    this.leftDirect = this.liveCtx.createGain();
+    this.leftCross = this.liveCtx.createGain();
+    this.rightDirect = this.liveCtx.createGain();
+    this.rightCross = this.liveCtx.createGain();
 
-    this.ringLength = Math.ceil(this.ctx.sampleRate * 2.4);
+    this.ringLength = Math.ceil(this.liveCtx.sampleRate * 2.4);
     this.ringL = new Float32Array(this.ringLength);
     this.ringR = new Float32Array(this.ringLength);
 
     this.input.connect(this.captureTap);
     this.captureTap.connect(this.captureProcessor);
     this.captureProcessor.connect(this.captureSilentGain);
-    this.captureSilentGain.connect(this.ctx.destination);
+    this.captureSilentGain.connect(this.liveCtx.destination);
 
     this.hp.connect(this.lp);
     this.lp.connect(this.preDelay);
@@ -158,8 +165,15 @@ export class ReverseAtmosphere {
   }
 
   connect(destination: Tone.ToneAudioNode | AudioNode | AudioParam) {
-    const target = (destination as Tone.ToneAudioNode & { input?: AudioNode }).input ?? destination;
-    this.output.connect(target as AudioNode | AudioParam);
+    const maybeTone = destination as Tone.ToneAudioNode & { input?: AudioNode | AudioParam };
+    const target = maybeTone.input ?? destination;
+
+    if (target instanceof AudioNode) {
+      this.output.connect(target);
+    } else {
+      this.output.connect(target);
+    }
+
     console.info('[ReverseAtmosphere] real reverse connected');
   }
 
@@ -192,7 +206,7 @@ export class ReverseAtmosphere {
   }
 
   setPreDelay(mode: ReversePreDelay) {
-    this.preDelay.delayTime.setTargetAtTime(PRE_DELAY_TIMES[mode], this.ctx.currentTime, 0.02);
+    this.preDelay.delayTime.setTargetAtTime(PRE_DELAY_TIMES[mode], this.liveCtx.currentTime, 0.02);
   }
 
   setWidth(value: number) {
@@ -237,13 +251,13 @@ export class ReverseAtmosphere {
     if (this.disposed) return;
 
     const duration = 0.5;
-    const length = Math.max(1, Math.floor(this.ctx.sampleRate * duration));
-    const buffer = this.ctx.createBuffer(2, length, this.ctx.sampleRate);
+    const length = Math.max(1, Math.floor(this.liveCtx.sampleRate * duration));
+    const buffer = this.liveCtx.createBuffer(2, length, this.liveCtx.sampleRate);
     const left = buffer.getChannelData(0);
     const right = buffer.getChannelData(1);
 
     for (let i = 0; i < length; i++) {
-      const t = i / this.ctx.sampleRate;
+      const t = i / this.liveCtx.sampleRate;
       const decay = Math.exp(-t * 8.5);
       const a =
         Math.sin(2 * Math.PI * 220 * t) * 0.55 +
@@ -267,11 +281,11 @@ export class ReverseAtmosphere {
     effectiveLevel: Exclude<ReverseAtmosphereLevel, 'off'>,
     strength: number,
   ) {
-    const now = this.ctx.currentTime;
-    const source = this.ctx.createBufferSource();
+    const now = this.liveCtx.currentTime;
+    const source = this.liveCtx.createBufferSource();
     source.buffer = buffer;
 
-    const gain = this.ctx.createGain();
+    const gain = this.liveCtx.createGain();
     const base = LEVEL_GAIN[effectiveLevel] * clamp(this.mix * 1.35, 0.12, 1);
     const debugBoost = this.debugSolo ? 1.35 : 1;
     const finalGain = clamp(base * strength * debugBoost, 0.02, 1);
@@ -309,17 +323,17 @@ export class ReverseAtmosphere {
   }
 
   private createReverseBufferFromRing(durationSeconds: number, strength: number): AudioBuffer | null {
-    if (this.capturedSamples < Math.floor(this.ctx.sampleRate * 0.12)) return null;
+    if (this.capturedSamples < Math.floor(this.liveCtx.sampleRate * 0.12)) return null;
 
     const wanted = Math.min(
-      Math.floor(durationSeconds * this.ctx.sampleRate),
+      Math.floor(durationSeconds * this.liveCtx.sampleRate),
       this.capturedSamples,
       this.ringLength,
     );
 
     if (wanted < 256) return null;
 
-    const temp = this.ctx.createBuffer(2, wanted, this.ctx.sampleRate);
+    const temp = this.liveCtx.createBuffer(2, wanted, this.liveCtx.sampleRate);
     const left = temp.getChannelData(0);
     const right = temp.getChannelData(1);
 
@@ -336,7 +350,7 @@ export class ReverseAtmosphere {
 
   private reverseBufferWithEnvelope(buffer: AudioBuffer, strength: number): AudioBuffer {
     const length = buffer.length;
-    const out = this.ctx.createBuffer(2, length, buffer.sampleRate);
+    const out = this.liveCtx.createBuffer(2, length, buffer.sampleRate);
     const inL = buffer.getChannelData(0);
     const inR = buffer.getChannelData(1);
     const outL = out.getChannelData(0);
@@ -370,18 +384,18 @@ export class ReverseAtmosphere {
   private applyTone(tone: number) {
     const hp = 110 + tone * 220;
     const lp = 1800 + tone * 5200;
-    this.hp.frequency.setTargetAtTime(hp, this.ctx.currentTime, 0.03);
-    this.lp.frequency.setTargetAtTime(lp, this.ctx.currentTime, 0.03);
+    this.hp.frequency.setTargetAtTime(hp, this.liveCtx.currentTime, 0.03);
+    this.lp.frequency.setTargetAtTime(lp, this.liveCtx.currentTime, 0.03);
   }
 
   private applyWidth(width: number) {
     const direct = 0.5 + width * 0.5;
     const cross = 0.5 - width * 0.5;
 
-    this.leftDirect.gain.setTargetAtTime(direct, this.ctx.currentTime, 0.02);
-    this.rightDirect.gain.setTargetAtTime(direct, this.ctx.currentTime, 0.02);
-    this.leftCross.gain.setTargetAtTime(cross, this.ctx.currentTime, 0.02);
-    this.rightCross.gain.setTargetAtTime(cross, this.ctx.currentTime, 0.02);
+    this.leftDirect.gain.setTargetAtTime(direct, this.liveCtx.currentTime, 0.02);
+    this.rightDirect.gain.setTargetAtTime(direct, this.liveCtx.currentTime, 0.02);
+    this.leftCross.gain.setTargetAtTime(cross, this.liveCtx.currentTime, 0.02);
+    this.rightCross.gain.setTargetAtTime(cross, this.liveCtx.currentTime, 0.02);
   }
 
   private applyOutputGain(transitioning: boolean, ramp = 0.14, mainLevel = 0.7) {
@@ -389,8 +403,8 @@ export class ReverseAtmosphere {
       this.debugSolo && this.level === 'off' ? 'deep' : this.level;
 
     if (effectiveLevel === 'off') {
-      this.output.gain.setTargetAtTime(0, this.ctx.currentTime, ramp);
-      this.wetGain.gain.setTargetAtTime(0, this.ctx.currentTime, ramp);
+      this.output.gain.setTargetAtTime(0, this.liveCtx.currentTime, ramp);
+      this.wetGain.gain.setTargetAtTime(0, this.liveCtx.currentTime, ramp);
       return;
     }
 
@@ -402,8 +416,8 @@ export class ReverseAtmosphere {
     const wet = clamp(base * duck * transitionLift * soloBoost, 0.02, 0.72);
     const out = clamp(0.62 + wet * 0.6, 0.4, 1);
 
-    this.wetGain.gain.setTargetAtTime(wet, this.ctx.currentTime, ramp);
-    this.output.gain.setTargetAtTime(out, this.ctx.currentTime, ramp);
+    this.wetGain.gain.setTargetAtTime(wet, this.liveCtx.currentTime, ramp);
+    this.output.gain.setTargetAtTime(out, this.liveCtx.currentTime, ramp);
 
     console.info('[ReverseAtmosphere] reverse gains', {
       effectiveLevel,
