@@ -21,7 +21,6 @@ const FADES_OUT: FadeTime[] = [1, 2, 4, 6];
 const REVERSE_LEVELS: ReverseAtmosphereLevel[] = ['off', 'light', 'medium', 'deep'];
 const REVERSE_PRE_DELAYS: ReversePreDelay[] = ['short', 'medium', 'long'];
 
-const engine = new PadEngine(loadSettings());
 
 const section = 'rounded-2xl border border-white/10 bg-slate-900/75 p-3 shadow-xl';
 
@@ -33,21 +32,32 @@ const AUDIO_LABELS: Record<AudioRuntimeStatus, string> = {
 };
 
 export default function App() {
-  const [settings, setSettings] = useState<PadSettings>(engine.settings);
+  const [settings, setSettings] = useState<PadSettings>(() => loadSettings());
   const [isPlaying, setIsPlaying] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [performanceMode, setPerformanceMode] = useState(true);
   const [loadingAudio, setLoadingAudio] = useState(false);
-  const [audioStatus, setAudioStatus] = useState<AudioRuntimeStatus>(engine.getAudioStatus());
-  const [audioError, setAudioError] = useState<string | null>(engine.getAudioError());
+  const engineRef = useRef<PadEngine | null>(null);
+  const [audioStatus, setAudioStatus] = useState<AudioRuntimeStatus>('locked');
+  const [audioError, setAudioError] = useState<string | null>(null);
   const ignoreKeyboard = useRef(false);
 
+  const getEngine = () => {
+    if (!engineRef.current) {
+      engineRef.current = new PadEngine(settings);
+      console.info('[UI] engine lazily created');
+    }
+    return engineRef.current;
+  };
+
   const syncAudioState = () => {
+    const engine = getEngine();
     setAudioStatus(engine.getAudioStatus());
     setAudioError(engine.getAudioError());
   };
 
   const unlockAudioIfNeeded = async () => {
+    const engine = getEngine();
     syncAudioState();
     if (engine.getAudioStatus() === 'ready') return true;
     const unlocked = await engine.ensureAudioUnlocked();
@@ -62,6 +72,7 @@ export default function App() {
   useEffect(() => {
     const onVisibility = async () => {
       if (document.visibilityState !== 'visible') return;
+      const engine = getEngine();
       await engine.refreshAudioStateAfterVisibility();
       syncAudioState();
     };
@@ -69,32 +80,45 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, []);
 
+  useEffect(() => () => engineRef.current?.dispose(), []);
+
   const applySettings = async (patch: Partial<PadSettings>) => {
     const next = { ...settings, ...patch, layers: { ...settings.layers, ...patch.layers } };
     setSettings(next);
-    await engine.updateSettings(patch);
+    await getEngine().updateSettings(patch);
   };
 
   const onStart = async () => {
+    console.info('[UI] start clicked');
     setLoadingAudio(true);
     const unlocked = await unlockAudioIfNeeded();
     if (!unlocked) {
       setLoadingAudio(false);
       return;
     }
+
+    const engine = getEngine();
+    if (engine.getAudioContextState() !== 'running') {
+      console.info('[UI] engine start blocked: context is not running', engine.getAudioContextState());
+      setLoadingAudio(false);
+      syncAudioState();
+      return;
+    }
+
     await engine.start(settings);
+    console.info('[UI] engine start executed');
     setLoadingAudio(false);
     setIsPlaying(true);
     syncAudioState();
   };
 
   const onSmoothStop = () => {
-    engine.smoothStop();
+    getEngine().smoothStop();
     setIsPlaying(false);
   };
 
   const onPanic = () => {
-    engine.panic();
+    getEngine().panic();
     setIsPlaying(false);
   };
 
@@ -105,7 +129,7 @@ export default function App() {
       setLoadingAudio(false);
       return;
     }
-    const nextPlaying = await engine.playOrToggle(key);
+    const nextPlaying = await getEngine().playOrToggle(key);
     setLoadingAudio(false);
     setIsPlaying(nextPlaying);
     if (nextPlaying) {
@@ -117,7 +141,7 @@ export default function App() {
   const onReverseTest = async () => {
     const unlocked = await unlockAudioIfNeeded();
     if (!unlocked) return;
-    engine.triggerReverseTest();
+    getEngine().triggerReverseTest();
   };
 
   const status = useMemo(() => (isPlaying ? 'PLAYING' : AUDIO_LABELS[audioStatus]), [audioStatus, isPlaying]);
@@ -163,7 +187,7 @@ export default function App() {
   }, [settings, isPlaying]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100" onPointerDown={() => void unlockAudioIfNeeded()}>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-3 pb-8 pt-4">
         <header className={`${section} flex items-center justify-between`}>
           <div>
@@ -264,8 +288,12 @@ export default function App() {
               <input type="checkbox" checked={settings.reverseDucking} onChange={(e) => void applySettings({ reverseDucking: e.target.checked })} />
               Reverse Ducking
             </label>
+            <label className="text-xs flex items-end gap-2">
+              <input type="checkbox" checked={settings.reverseDebugSolo} onChange={(e) => void applySettings({ reverseDebugSolo: e.target.checked })} />
+              Reverse Debug Solo
+            </label>
             <label className="text-xs">Reverse Mix ({Math.round(settings.reverseMix * 100)}%)
-              <input className="w-full" type="range" min="0" max="0.35" step="0.01" value={settings.reverseMix} onChange={(e) => void applySettings({ reverseMix: Number(e.target.value) })} />
+              <input className="w-full" type="range" min="0" max="0.7" step="0.01" value={settings.reverseMix} onChange={(e) => void applySettings({ reverseMix: Number(e.target.value) })} />
             </label>
             <label className="text-xs">Reverse Tone
               <input className="w-full" type="range" min="0" max="1" step="0.01" value={settings.reverseTone} onChange={(e) => void applySettings({ reverseTone: Number(e.target.value) })} />
