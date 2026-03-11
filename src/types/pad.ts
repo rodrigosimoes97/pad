@@ -55,6 +55,7 @@ export type PadSettings = {
   reversePreDelay: ReversePreDelay;
   reverseWidth: number;
   reverseDucking: boolean;
+  reverseDebugSolo: boolean;
   brightness: number;
   masterVolume: number;
   fadeIn: FadeTime;
@@ -80,11 +81,12 @@ export const DEFAULT_SETTINGS: PadSettings = {
   reverbType: 'church',
   reverbMix: 0.42,
   reverseAtmosphere: 'light',
-  reverseMix: 0.19,
+  reverseMix: 0.3,
   reverseTone: 0.52,
   reversePreDelay: 'medium',
   reverseWidth: 0.68,
-  reverseDucking: true,
+  reverseDucking: false,
+  reverseDebugSolo: false,
   brightness: 1,
   masterVolume: 0.7,
   fadeIn: 1,

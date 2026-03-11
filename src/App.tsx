@@ -76,13 +76,23 @@ export default function App() {
   };
 
   const onStart = async () => {
+    console.info('[UI] start clicked');
     setLoadingAudio(true);
     const unlocked = await unlockAudioIfNeeded();
     if (!unlocked) {
       setLoadingAudio(false);
       return;
     }
+
+    if (engine.getAudioContextState() !== 'running') {
+      console.info('[UI] engine start blocked: context is not running', engine.getAudioContextState());
+      setLoadingAudio(false);
+      syncAudioState();
+      return;
+    }
+
     await engine.start(settings);
+    console.info('[UI] engine start executed');
     setLoadingAudio(false);
     setIsPlaying(true);
     syncAudioState();
@@ -163,7 +173,7 @@ export default function App() {
   }, [settings, isPlaying]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100" onPointerDown={() => void unlockAudioIfNeeded()}>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-3 pb-8 pt-4">
         <header className={`${section} flex items-center justify-between`}>
           <div>
@@ -264,8 +274,12 @@ export default function App() {
               <input type="checkbox" checked={settings.reverseDucking} onChange={(e) => void applySettings({ reverseDucking: e.target.checked })} />
               Reverse Ducking
             </label>
+            <label className="text-xs flex items-end gap-2">
+              <input type="checkbox" checked={settings.reverseDebugSolo} onChange={(e) => void applySettings({ reverseDebugSolo: e.target.checked })} />
+              Reverse Debug Solo
+            </label>
             <label className="text-xs">Reverse Mix ({Math.round(settings.reverseMix * 100)}%)
-              <input className="w-full" type="range" min="0" max="0.35" step="0.01" value={settings.reverseMix} onChange={(e) => void applySettings({ reverseMix: Number(e.target.value) })} />
+              <input className="w-full" type="range" min="0" max="0.7" step="0.01" value={settings.reverseMix} onChange={(e) => void applySettings({ reverseMix: Number(e.target.value) })} />
             </label>
             <label className="text-xs">Reverse Tone
               <input className="w-full" type="range" min="0" max="1" step="0.01" value={settings.reverseTone} onChange={(e) => void applySettings({ reverseTone: Number(e.target.value) })} />

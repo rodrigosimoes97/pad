@@ -5,9 +5,9 @@ const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(mi
 
 const LEVEL_GAIN: Record<ReverseAtmosphereLevel, number> = {
   off: 0,
-  light: 0.52,
-  medium: 0.82,
-  deep: 1.12,
+  light: 0.72,
+  medium: 1.1,
+  deep: 1.5,
 };
 
 const PRE_DELAY_TIMES: Record<ReversePreDelay, number> = {
@@ -23,9 +23,10 @@ export class ReverseAtmosphere {
   private width = new Tone.StereoWidener(0.68);
   private preDelay = new Tone.FeedbackDelay({ delayTime: PRE_DELAY_TIMES.medium, feedback: 0.18, wet: 1 });
   private reverseReverb = new Tone.Reverb({ decay: 5.2, preDelay: 0.04, wet: 1 });
-  private textureGain = new Tone.Gain(0.24);
+  private textureGain = new Tone.Gain(0.36);
   private swellGain = new Tone.Gain(0);
   private output = new Tone.Gain(0);
+  private debugSolo = false;
 
   private level: ReverseAtmosphereLevel = 'off';
   private mix = 0.18;
@@ -33,7 +34,11 @@ export class ReverseAtmosphere {
   private duckingEnabled = true;
 
   constructor() {
-    this.input.chain(this.hp, this.lp, this.width, this.preDelay, this.reverseReverb, this.textureGain, this.swellGain, this.output);
+    this.input.chain(this.hp, this.lp, this.width, this.preDelay, this.reverseReverb);
+    this.reverseReverb.connect(this.textureGain);
+    this.textureGain.connect(this.output);
+    this.reverseReverb.connect(this.swellGain);
+    this.swellGain.connect(this.output);
   }
 
   async init() {
@@ -44,14 +49,16 @@ export class ReverseAtmosphere {
 
   connect(destination: Tone.ToneAudioNode | AudioNode | AudioParam) {
     this.output.connect(destination);
+    console.info('[ReverseAtmosphere] reverse connected to master');
   }
 
   connectInput(source: Tone.ToneAudioNode) {
-    source.connect(this.input as unknown as AudioNode);
+    source.connect(this.input);
+    console.info('[ReverseAtmosphere] reverse input active');
   }
 
   disconnectInput(source: Tone.ToneAudioNode) {
-    source.disconnect(this.input as unknown as AudioNode);
+    source.disconnect(this.input);
   }
 
   setAmount(level: ReverseAtmosphereLevel) {
@@ -60,7 +67,7 @@ export class ReverseAtmosphere {
   }
 
   setMix(mix: number) {
-    this.mix = clamp(mix, 0, 0.35);
+    this.mix = clamp(mix, 0, 0.7);
     this.applyOutputGain(false);
   }
 
@@ -90,12 +97,36 @@ export class ReverseAtmosphere {
     if (this.level === 'off') return;
     const now = Tone.now();
     const predelaySeconds = Tone.Time(this.preDelay.delayTime.value).toSeconds();
-    const target = clamp((0.15 + this.mix * 0.72) * LEVEL_GAIN[this.level] * strength, 0.03, 0.52);
+    const target = clamp((0.18 + this.mix * 0.86) * LEVEL_GAIN[this.level] * strength, 0.05, 0.82);
+
+    console.info('[ReverseAtmosphere] reverse trigger fired', { strength, target, level: this.level });
 
     this.swellGain.gain.cancelScheduledValues(now);
     this.swellGain.gain.setValueAtTime(0.004, now);
     this.swellGain.gain.linearRampToValueAtTime(target, now + predelaySeconds + 0.14);
     this.swellGain.gain.exponentialRampToValueAtTime(target * 0.42 + 0.002, now + predelaySeconds + 2.25);
+  }
+
+  setDebugSolo(enabled: boolean) {
+    this.debugSolo = enabled;
+    this.applyOutputGain(false, 0.12);
+  }
+
+  triggerDebugPulse() {
+    const now = Tone.now();
+    const osc = new Tone.Oscillator({ type: 'triangle', frequency: 540, volume: -8 });
+    const gain = new Tone.Gain(0);
+    osc.connect(gain);
+    gain.connect(this.input);
+    osc.start(now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.85, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+    osc.stop(now + 0.45);
+    osc.onstop = () => {
+      osc.dispose();
+      gain.dispose();
+    };
   }
 
   private applyTone(tone: number) {
@@ -107,9 +138,11 @@ export class ReverseAtmosphere {
 
   private applyOutputGain(transitioning: boolean, ramp = 0.2, mainLevel = 0.7) {
     const base = this.mix * LEVEL_GAIN[this.level];
-    const duck = this.duckingEnabled ? clamp(1 - mainLevel * 0.22, 0.72, 1) : 1;
+    const duck = this.duckingEnabled ? clamp(1 - mainLevel * 0.12, 0.86, 1) : 1;
     const transitionLift = transitioning ? 1.24 : 1;
-    const target = this.level === 'off' ? 0 : clamp(base * duck * transitionLift, 0, 0.48);
+    const soloBoost = this.debugSolo ? 2.6 : 1;
+    const target = this.level === 'off' ? 0 : clamp(base * duck * transitionLift * soloBoost, 0, 0.95);
+    console.info('[ReverseAtmosphere] reverse output gain', { target, level: this.level, mix: this.mix, debugSolo: this.debugSolo });
     this.output.gain.rampTo(target, ramp);
   }
 
