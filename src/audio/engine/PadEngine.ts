@@ -1,4 +1,5 @@
 import * as Tone from 'tone';
+import { ReverseAtmosphere } from '../effects/ReverseAtmosphere';
 import { WORSHIP_PRESETS } from '../presets/worshipPresets';
 import type { LayerMix, MotionLevel, PadSettings, ReverbType } from '../../types/pad';
 import { buildPadVoices } from './harmony';
@@ -51,6 +52,7 @@ export class PadEngine {
   private ampLfo: Tone.LFO | null = null;
   private algoReverb: Tone.Reverb | null = null;
   private convolver: Tone.Convolver | null = null;
+  private reverseAtmosphere: ReverseAtmosphere | null = null;
   private useConvolver = false;
 
   constructor(initial: PadSettings) {
@@ -81,6 +83,12 @@ export class PadEngine {
       this.ampLfo = new Tone.LFO({ frequency: 0.02, min: 0.98, max: 1.02 }).connect(this.master.gain).start();
 
       await this.tryLoadConvolutionIR();
+
+      this.reverseAtmosphere = new ReverseAtmosphere();
+      await this.reverseAtmosphere.init();
+      this.reverseAtmosphere.connect(this.masterFilter);
+      this.applyReverseSettings(this.current);
+
       this.initialized = true;
     }
 
@@ -160,6 +168,7 @@ export class PadEngine {
     preFilter.chain(shimmerEq, chorus, stereo, saturation);
     saturation.connect(dryGain);
     saturation.connect(reverbSend);
+    this.reverseAtmosphere?.connectInput(saturation);
 
     if (this.useConvolver && this.convolver) {
       reverbSend.connect(this.convolver);
@@ -201,12 +210,24 @@ export class PadEngine {
     this.algoReverb.set(REVERB_CONFIG[type]);
   }
 
+  private applyReverseSettings(settings: PadSettings) {
+    if (!this.reverseAtmosphere) return;
+    this.reverseAtmosphere.setAmount(settings.reverseAtmosphere);
+    this.reverseAtmosphere.setMix(settings.reverseMix);
+    this.reverseAtmosphere.setTone(settings.reverseTone);
+    this.reverseAtmosphere.setPreDelay(settings.reversePreDelay);
+    this.reverseAtmosphere.setWidth(settings.reverseWidth);
+    this.reverseAtmosphere.setDucking(settings.reverseDucking);
+    this.reverseAtmosphere.applyDuckingContext(settings.masterVolume, false);
+  }
+
   async playOrToggle(nextKey: PadSettings['key']): Promise<boolean> {
     await this.ensureStartedFromGesture();
     if (this.playing && this.current.key === nextKey && !this.current.hold) {
       this.smoothStop();
       return false;
     }
+    if (this.playing && this.current.key !== nextKey) this.reverseAtmosphere?.triggerTransitionSwell(0.72);
     await this.start({ ...this.current, key: nextKey });
     return true;
   }
@@ -215,6 +236,7 @@ export class PadEngine {
     await this.ensureStartedFromGesture();
     this.current = settings;
     this.setReverbType(settings.reverbType);
+    this.applyReverseSettings(settings);
 
     const stack = this.buildStack(settings);
     const now = Tone.now();
@@ -229,6 +251,8 @@ export class PadEngine {
     stack.outGain.gain.setValueAtTime(0, now);
     stack.outGain.gain.linearRampToValueAtTime(clamp(settings.masterVolume, 0, 0.9), now + settings.fadeIn);
 
+    this.reverseAtmosphere?.triggerTransitionSwell(this.playing ? 0.82 : 0.5);
+
     if (this.activeStack) {
       this.releaseStack(this.activeStack, settings.fadeOut);
     }
@@ -236,12 +260,15 @@ export class PadEngine {
     this.activeStack = stack;
     this.playing = true;
     this.updateMotion(settings);
+    this.reverseAtmosphere?.applyDuckingContext(settings.masterVolume, true);
+    window.setTimeout(() => this.reverseAtmosphere?.applyDuckingContext(settings.masterVolume, false), 420);
   }
 
   async updateSettings(patch: Partial<PadSettings>) {
     this.current = { ...this.current, ...patch, layers: { ...this.current.layers, ...patch.layers } };
 
     if (patch.reverbType) this.setReverbType(this.current.reverbType);
+    this.applyReverseSettings(this.current);
     this.updateMotion(this.current);
 
     if (this.activeStack) {
@@ -257,6 +284,7 @@ export class PadEngine {
       }
 
       if (patch.key || patch.mode || patch.structure || patch.octave || patch.preset) {
+        this.reverseAtmosphere?.triggerTransitionSwell(0.8);
         await this.start(this.current);
       }
     }
@@ -264,9 +292,12 @@ export class PadEngine {
 
   smoothStop() {
     if (!this.activeStack) return;
+    this.reverseAtmosphere?.triggerTransitionSwell(0.6);
+    this.reverseAtmosphere?.applyDuckingContext(this.current.masterVolume, true);
     this.releaseStack(this.activeStack, this.current.fadeOut);
     this.activeStack = null;
     this.playing = false;
+    window.setTimeout(() => this.reverseAtmosphere?.applyDuckingContext(this.current.masterVolume, false), 380);
   }
 
   panic() {
@@ -288,6 +319,7 @@ export class PadEngine {
   }
 
   private disposeStack(stack: VoiceStack) {
+    this.reverseAtmosphere?.disconnectInput(stack.saturation);
     Object.values(stack.layers).forEach((layer) => {
       layer.synth.dispose();
       layer.gain.dispose();
@@ -301,5 +333,10 @@ export class PadEngine {
     stack.reverbSend.dispose();
     stack.dryGain.dispose();
     stack.outGain.dispose();
+  }
+
+  dispose() {
+    this.activeStack && this.disposeStack(this.activeStack);
+    this.reverseAtmosphere?.dispose();
   }
 }
