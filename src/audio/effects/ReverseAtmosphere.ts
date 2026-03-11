@@ -143,7 +143,7 @@ export class ReverseAtmosphere {
     this.merger.connect(this.wetGain);
     this.wetGain.connect(this.output);
 
-    this.captureProcessor.onaudioprocess = (event) => {
+    this.captureProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
       if (this.disposed) return;
 
       const inputL = event.inputBuffer.getChannelData(0);
@@ -152,7 +152,7 @@ export class ReverseAtmosphere {
           ? event.inputBuffer.getChannelData(1)
           : inputL;
 
-      for (let i = 0; i < inputL.length; i++) {
+      for (let i = 0; i < inputL.length; i += 1) {
         this.ringL[this.writeIndex] = inputL[i];
         this.ringR[this.writeIndex] = inputR[i];
         this.writeIndex = (this.writeIndex + 1) % this.ringLength;
@@ -165,13 +165,12 @@ export class ReverseAtmosphere {
     this.applyWidth(this.width);
     this.applyOutputGain(false, 0.01);
   }
-}
 
-  async init() {
+  async init(): Promise<void> {
     this.initialized = true;
   }
 
-    private connectOutputTarget(target: AudioNode | AudioParam) {
+  private connectOutputTarget(target: AudioNode | AudioParam): void {
     if ('setValueAtTime' in target) {
       this.output.connect(target as AudioParam);
     } else {
@@ -179,7 +178,7 @@ export class ReverseAtmosphere {
     }
   }
 
-  connect(destination: Tone.ToneAudioNode | AudioNode | AudioParam) {
+  connect(destination: Tone.ToneAudioNode | AudioNode | AudioParam): void {
     const maybeTone = destination as Tone.ToneAudioNode & {
       input?: AudioNode | AudioParam;
     };
@@ -195,12 +194,12 @@ export class ReverseAtmosphere {
     console.info('[ReverseAtmosphere] real reverse connected');
   }
 
-  connectInput(source: Tone.ToneAudioNode) {
+  connectInput(source: Tone.ToneAudioNode): void {
     Tone.connect(source, this.input);
     console.info('[ReverseAtmosphere] capture input connected');
   }
 
-  disconnectInput(source: Tone.ToneAudioNode) {
+  disconnectInput(source: Tone.ToneAudioNode): void {
     try {
       Tone.disconnect(source, this.input);
     } catch {
@@ -208,45 +207,49 @@ export class ReverseAtmosphere {
     }
   }
 
-  setAmount(level: ReverseAtmosphereLevel) {
+  setAmount(level: ReverseAtmosphereLevel): void {
     this.level = level;
     this.applyOutputGain(false);
   }
 
-  setMix(mix: number) {
+  setMix(mix: number): void {
     this.mix = clamp(mix, 0, 0.7);
     this.applyOutputGain(false);
   }
 
-  setTone(tone: number) {
+  setTone(tone: number): void {
     this.tone = clamp(tone, 0, 1);
     this.applyTone(this.tone);
   }
 
-  setPreDelay(mode: ReversePreDelay) {
-    this.preDelay.delayTime.setTargetAtTime(PRE_DELAY_TIMES[mode], this.liveCtx.currentTime, 0.02);
+  setPreDelay(mode: ReversePreDelay): void {
+    this.preDelay.delayTime.setTargetAtTime(
+      PRE_DELAY_TIMES[mode],
+      this.liveCtx.currentTime,
+      0.02,
+    );
   }
 
-  setWidth(value: number) {
+  setWidth(value: number): void {
     this.width = clamp(value, 0, 1);
     this.applyWidth(this.width);
   }
 
-  setDucking(enabled: boolean) {
+  setDucking(enabled: boolean): void {
     this.duckingEnabled = enabled;
     this.applyOutputGain(false);
   }
 
-  applyDuckingContext(mainLevel: number, transitioning: boolean) {
+  applyDuckingContext(mainLevel: number, transitioning: boolean): void {
     this.applyOutputGain(transitioning, 0.09, clamp(mainLevel, 0, 1));
   }
 
-  setDebugSolo(enabled: boolean) {
+  setDebugSolo(enabled: boolean): void {
     this.debugSolo = enabled;
     this.applyOutputGain(false, 0.08);
   }
 
-  triggerTransitionSwell(strength = 1) {
+  triggerTransitionSwell(strength = 1): void {
     if (!this.initialized || this.disposed) return;
 
     const effectiveLevel: ReverseAtmosphereLevel =
@@ -265,7 +268,7 @@ export class ReverseAtmosphere {
     this.playBuffer(target, effectiveLevel, strength);
   }
 
-  triggerDebugPulse() {
+  triggerDebugPulse(): void {
     if (this.disposed) return;
 
     const duration = 0.5;
@@ -274,13 +277,15 @@ export class ReverseAtmosphere {
     const left = buffer.getChannelData(0);
     const right = buffer.getChannelData(1);
 
-    for (let i = 0; i < length; i++) {
+    for (let i = 0; i < length; i += 1) {
       const t = i / this.liveCtx.sampleRate;
       const decay = Math.exp(-t * 8.5);
+
       const a =
         Math.sin(2 * Math.PI * 220 * t) * 0.55 +
         Math.sin(2 * Math.PI * 440 * t) * 0.28 +
         Math.sin(2 * Math.PI * 880 * t) * 0.16;
+
       const b =
         Math.sin(2 * Math.PI * 226 * t) * 0.52 +
         Math.sin(2 * Math.PI * 452 * t) * 0.24 +
@@ -298,7 +303,7 @@ export class ReverseAtmosphere {
     buffer: AudioBuffer,
     effectiveLevel: Exclude<ReverseAtmosphereLevel, 'off'>,
     strength: number,
-  ) {
+  ): void {
     const now = this.liveCtx.currentTime;
     const source = this.liveCtx.createBufferSource();
     source.buffer = buffer;
@@ -310,7 +315,10 @@ export class ReverseAtmosphere {
 
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.exponentialRampToValueAtTime(finalGain, now + 0.06);
-    gain.gain.exponentialRampToValueAtTime(Math.max(finalGain * 0.34, 0.0001), now + buffer.duration * 0.72);
+    gain.gain.exponentialRampToValueAtTime(
+      Math.max(finalGain * 0.34, 0.0001),
+      now + buffer.duration * 0.72,
+    );
     gain.gain.exponentialRampToValueAtTime(0.0001, now + buffer.duration + 0.12);
 
     source.connect(gain);
@@ -322,10 +330,14 @@ export class ReverseAtmosphere {
     source.onended = () => {
       try {
         source.disconnect();
-      } catch {}
+      } catch {
+        // ignore
+      }
       try {
         gain.disconnect();
-      } catch {}
+      } catch {
+        // ignore
+      }
       this.activeSources.delete(active);
     };
 
@@ -333,7 +345,12 @@ export class ReverseAtmosphere {
     source.stop(now + buffer.duration + 0.15);
   }
 
-  private createReverseBufferFromRing(durationSeconds: number, strength: number): AudioBuffer | null {
+  private createReverseBufferFromRing(
+    durationSeconds: number,
+    strength: number,
+  ): AudioBuffer | null {
+    void strength;
+
     if (this.capturedSamples < Math.floor(this.liveCtx.sampleRate * 0.12)) return null;
 
     const wanted = Math.min(
@@ -350,7 +367,7 @@ export class ReverseAtmosphere {
 
     let readIndex = (this.writeIndex - wanted + this.ringLength) % this.ringLength;
 
-    for (let i = 0; i < wanted; i++) {
+    for (let i = 0; i < wanted; i += 1) {
       left[i] = this.ringL[readIndex];
       right[i] = this.ringR[readIndex];
       readIndex = (readIndex + 1) % this.ringLength;
@@ -370,7 +387,7 @@ export class ReverseAtmosphere {
     const fadeInSamples = Math.max(48, Math.floor(buffer.sampleRate * 0.01));
     const fadeOutSamples = Math.max(96, Math.floor(buffer.sampleRate * 0.018));
 
-    for (let i = 0; i < length; i++) {
+    for (let i = 0; i < length; i += 1) {
       const srcIndex = length - 1 - i;
 
       let env = Math.pow(i / Math.max(1, length - 1), 1.8);
@@ -392,14 +409,15 @@ export class ReverseAtmosphere {
     return out;
   }
 
-  private applyTone(tone: number) {
+  private applyTone(tone: number): void {
     const hp = 110 + tone * 220;
     const lp = 1800 + tone * 5200;
+
     this.hp.frequency.setTargetAtTime(hp, this.liveCtx.currentTime, 0.03);
     this.lp.frequency.setTargetAtTime(lp, this.liveCtx.currentTime, 0.03);
   }
 
-  private applyWidth(width: number) {
+  private applyWidth(width: number): void {
     const direct = 0.5 + width * 0.5;
     const cross = 0.5 - width * 0.5;
 
@@ -409,7 +427,11 @@ export class ReverseAtmosphere {
     this.rightCross.gain.setTargetAtTime(cross, this.liveCtx.currentTime, 0.02);
   }
 
-  private applyOutputGain(transitioning: boolean, ramp = 0.14, mainLevel = 0.7) {
+  private applyOutputGain(
+    transitioning: boolean,
+    ramp = 0.14,
+    mainLevel = 0.7,
+  ): void {
     const effectiveLevel: ReverseAtmosphereLevel =
       this.debugSolo && this.level === 'off' ? 'deep' : this.level;
 
@@ -431,7 +453,7 @@ export class ReverseAtmosphere {
     this.output.gain.setTargetAtTime(out, this.liveCtx.currentTime, ramp);
   }
 
-  dispose() {
+  dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
 
@@ -440,60 +462,97 @@ export class ReverseAtmosphere {
     for (const active of this.activeSources) {
       try {
         active.source.stop();
-      } catch {}
+      } catch {
+        // ignore
+      }
       try {
         active.source.disconnect();
-      } catch {}
+      } catch {
+        // ignore
+      }
       try {
         active.gain.disconnect();
-      } catch {}
+      } catch {
+        // ignore
+      }
     }
+
     this.activeSources.clear();
 
     try {
       this.input.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.captureTap.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.captureProcessor.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.captureSilentGain.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.hp.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.lp.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.preDelay.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.splitter.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.leftDirect.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.leftCross.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.rightDirect.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.rightCross.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.merger.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.wetGain.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
     try {
       this.output.disconnect();
-    } catch {}
+    } catch {
+      // ignore
+    }
   }
 }
