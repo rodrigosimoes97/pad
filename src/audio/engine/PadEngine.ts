@@ -59,6 +59,8 @@ export class PadEngine {
   private convolver: Tone.Convolver | null = null;
   private reverseAtmosphere: ReverseAtmosphere | null = null;
   private useConvolver = false;
+  private masterConnected = false;
+  private reverseAvailable = false;
 
   constructor(initial: PadSettings) {
     this.current = initial;
@@ -93,53 +95,91 @@ export class PadEngine {
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) return;
 
-    this.master = new Tone.Gain(0.7);
-    this.masterFilter = new Tone.Filter({ type: 'lowpass', frequency: 2100, rolloff: -12, Q: 0.4 });
-    this.limiter = new Tone.Limiter(-1.5);
-    this.masterFilter.connect(this.limiter);
-    this.limiter.connect(this.master);
-    this.master.toDestination();
+    let initStage = 'master/filter/limiter';
+    try {
+      this.log('init stage:', initStage);
+      this.master = new Tone.Gain(0.7);
+      this.masterFilter = new Tone.Filter({ type: 'lowpass', frequency: 2100, rolloff: -12, Q: 0.4 });
+      this.limiter = new Tone.Limiter(-1.5);
+      this.masterFilter.connect(this.limiter);
+      this.limiter.connect(this.master);
+      this.master.toDestination();
+      this.masterConnected = true;
+      this.log('master connected=', this.masterConnected);
 
-    this.algoReverb = new Tone.Reverb(REVERB_CONFIG[this.current.reverbType]);
-    this.algoReverb.wet.value = 1;
+      initStage = 'reverb creation';
+      this.log('init stage:', initStage);
+      this.algoReverb = new Tone.Reverb(REVERB_CONFIG[this.current.reverbType]);
+      this.algoReverb.wet.value = 1;
 
-    this.masterLfo = new Tone.LFO({ frequency: 0.03, min: 1600, max: 2200 }).connect(this.masterFilter.frequency).start();
-    this.ampLfo = new Tone.LFO({ frequency: 0.02, min: 0.98, max: 1.02 }).connect(this.master.gain).start();
+      // temporary hard fallback: keep convolver disabled outside critical path
+      this.useConvolver = false;
 
-    await this.tryLoadConvolutionIR();
+      initStage = 'LFO creation';
+      this.log('init stage:', initStage);
+      this.masterLfo = new Tone.LFO({ frequency: 0.03, min: 1600, max: 2200 }).connect(this.masterFilter.frequency).start();
+      this.ampLfo = new Tone.LFO({ frequency: 0.02, min: 0.98, max: 1.02 }).connect(this.master.gain).start();
 
-    this.reverseAtmosphere = new ReverseAtmosphere();
-    await this.reverseAtmosphere.init();
-    this.reverseAtmosphere.connect(this.masterFilter);
-    this.applyReverseSettings(this.current);
+      initStage = 'reverse init';
+      this.log('init stage:', initStage);
+      try {
+        this.reverseAtmosphere = new ReverseAtmosphere();
+        await this.reverseAtmosphere.init();
 
-    this.initialized = true;
-    this.log('initialized audio graph, context=', this.getAudioContextState());
+        initStage = 'reverse connect';
+        this.log('init stage:', initStage);
+        this.reverseAtmosphere.connect(this.masterFilter);
+        this.reverseAvailable = true;
+        this.applyReverseSettings(this.current);
+      } catch (error) {
+        this.reverseAvailable = false;
+        this.reverseAtmosphere?.dispose();
+        this.reverseAtmosphere = null;
+        const message = error instanceof Error ? error.message : String(error);
+        this.log('warning: reverse module disabled due to init error:', message);
+      }
+
+      this.initialized = true;
+      this.log('initialized audio graph, context=', this.getAudioContextState());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Initialization failed at ${initStage}: ${message}`);
+    }
   }
 
   async ensureAudioUnlocked(): Promise<boolean> {
-    await this.ensureInitialized();
-    if (this.getAudioContextState() === 'running') return true;
+    if (this.getAudioContextState() === 'running') {
+      await this.ensureInitialized();
+      return true;
+    }
     if (this.unlockInProgress) return false;
 
     this.unlockInProgress = true;
     this.unlockError = null;
-    this.log('unlock attempt; context=', this.getAudioContextState());
+    this.log('unlock requested');
+    this.log('audio context before resume=', this.getAudioContextState());
 
     try {
+      this.log('Tone.start executing');
       await Tone.start();
       if (Tone.getContext().rawContext.state !== 'running') {
         await Tone.getContext().rawContext.resume();
       }
 
+      this.log('audio context after resume=', this.getAudioContextState());
       if (this.getAudioContextState() !== 'running') {
         throw new Error(`AudioContext state is ${this.getAudioContextState()}`);
       }
 
+      await this.ensureInitialized();
+      this.log('ensureInitialized executed after unlock');
+
       if (this.master) {
         this.master.disconnect();
         this.master.toDestination();
+        this.masterConnected = true;
       }
+      this.log('master connected=', this.masterConnected);
 
       this.unlockError = null;
       this.log('unlock completed; context=', this.getAudioContextState());
@@ -166,17 +206,6 @@ export class PadEngine {
     return this.getAudioContextState() === 'running';
   }
 
-  private async tryLoadConvolutionIR() {
-    try {
-      const irUrl = `${import.meta.env.BASE_URL}irs/church-impulse.wav`;
-      const response = await fetch(irUrl);
-      if (!response.ok) return;
-      this.convolver = new Tone.Convolver(irUrl);
-      this.useConvolver = true;
-    } catch {
-      this.useConvolver = false;
-    }
-  }
 
   private requireOutput(): Tone.Filter {
     if (!this.masterFilter || !this.master || !this.limiter || !this.algoReverb) {
@@ -238,7 +267,14 @@ export class PadEngine {
     preFilter.chain(shimmerEq, chorus, stereo, saturation);
     saturation.connect(dryGain);
     saturation.connect(reverbSend);
-    this.reverseAtmosphere?.connectInput(preFilter);
+    if (this.reverseAvailable && this.reverseAtmosphere) {
+      try {
+        this.reverseAtmosphere.connectInput(saturation);
+        this.log('reverse input point= saturation');
+      } catch (error) {
+        this.log('warning: reverse input connection failed', error);
+      }
+    }
 
     if (this.useConvolver && this.convolver) {
       reverbSend.connect(this.convolver);
@@ -281,18 +317,29 @@ export class PadEngine {
   }
 
   private applyReverseSettings(settings: PadSettings) {
-    if (!this.reverseAtmosphere) return;
+    if (!this.reverseAvailable || !this.reverseAtmosphere) return;
     this.reverseAtmosphere.setAmount(settings.reverseAtmosphere);
     this.reverseAtmosphere.setMix(settings.reverseMix);
     this.reverseAtmosphere.setTone(settings.reverseTone);
     this.reverseAtmosphere.setPreDelay(settings.reversePreDelay);
     this.reverseAtmosphere.setWidth(settings.reverseWidth);
     this.reverseAtmosphere.setDucking(settings.reverseDucking);
+    this.reverseAtmosphere.setDebugSolo(settings.reverseDebugSolo);
     this.reverseAtmosphere.applyDuckingContext(settings.masterVolume, false);
   }
 
   triggerReverseTest() {
-    this.reverseAtmosphere?.triggerTransitionSwell(1.18);
+    this.log('reverse test fired');
+    if (!this.reverseAvailable || !this.reverseAtmosphere) {
+      this.log('reverse test skipped: reverse module unavailable');
+      return;
+    }
+    this.reverseAtmosphere.setDebugSolo(true);
+    this.reverseAtmosphere.triggerDebugPulse();
+    this.reverseAtmosphere.triggerTransitionSwell(1.45);
+    window.setTimeout(() => {
+      this.reverseAtmosphere?.setDebugSolo(this.current.reverseDebugSolo);
+    }, 900);
   }
 
   async playOrToggle(nextKey: PadSettings['key']): Promise<boolean> {
@@ -311,10 +358,19 @@ export class PadEngine {
     this.setReverbType(settings.reverbType);
     this.applyReverseSettings(settings);
 
+    this.log('start stage: build stack');
     const stack = this.buildStack(settings);
     const now = Tone.now();
 
     this.log('start triggered; context=', this.getAudioContextState());
+    if (this.getAudioContextState() !== 'running') {
+      throw new Error(`AudioContext not running: ${this.getAudioContextState()}`);
+    }
+    if (!this.masterConnected && this.master) {
+      this.master.toDestination();
+      this.masterConnected = true;
+      this.log('master connected=', this.masterConnected);
+    }
 
     for (const [name, layer] of Object.entries(stack.layers) as [keyof LayerMix, LayerNodes][]) {
       const layerGain = clamp(settings.layers[name], 0, 1) * 0.55;
@@ -394,7 +450,13 @@ export class PadEngine {
   }
 
   private disposeStack(stack: VoiceStack) {
-    this.reverseAtmosphere?.disconnectInput(stack.preFilter);
+    if (this.reverseAvailable && this.reverseAtmosphere) {
+      try {
+        this.reverseAtmosphere.disconnectInput(stack.saturation);
+      } catch (error) {
+        this.log('warning: reverse input disconnect failed', error);
+      }
+    }
     Object.values(stack.layers).forEach((layer) => {
       layer.synth.dispose();
       layer.gain.dispose();
@@ -413,5 +475,6 @@ export class PadEngine {
   dispose() {
     this.activeStack && this.disposeStack(this.activeStack);
     this.reverseAtmosphere?.dispose();
+    this.masterConnected = false;
   }
 }
