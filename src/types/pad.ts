@@ -4,6 +4,8 @@ export type KeyNote = (typeof KEYS)[number];
 export type Mode = 'major' | 'minor';
 export type MotionLevel = 'off' | 'slow' | 'medium' | 'deep';
 export type ReverbType = 'hall' | 'church' | 'cathedral' | 'ambient';
+export type ReverseAtmosphereLevel = 'off' | 'light' | 'medium' | 'deep';
+export type ReversePreDelay = 'short' | 'medium' | 'long';
 export type FadeTime = 0.5 | 1 | 2 | 4 | 6;
 
 export type HarmonicStructure =
@@ -47,6 +49,12 @@ export type PadSettings = {
   motion: MotionLevel;
   reverbType: ReverbType;
   reverbMix: number;
+  reverseAtmosphere: ReverseAtmosphereLevel;
+  reverseMix: number;
+  reverseTone: number;
+  reversePreDelay: ReversePreDelay;
+  reverseWidth: number;
+  reverseDucking: boolean;
   brightness: number;
   masterVolume: number;
   fadeIn: FadeTime;
@@ -71,6 +79,12 @@ export const DEFAULT_SETTINGS: PadSettings = {
   motion: 'slow',
   reverbType: 'church',
   reverbMix: 0.42,
+  reverseAtmosphere: 'light',
+  reverseMix: 0.19,
+  reverseTone: 0.52,
+  reversePreDelay: 'medium',
+  reverseWidth: 0.68,
+  reverseDucking: true,
   brightness: 1,
   masterVolume: 0.7,
   fadeIn: 1,
