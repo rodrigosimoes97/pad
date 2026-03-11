@@ -137,12 +137,21 @@ export class ReverseAtmosphere {
   }
 
   private applyOutputGain(transitioning: boolean, ramp = 0.2, mainLevel = 0.7) {
-    const base = this.mix * LEVEL_GAIN[this.level];
+    const effectiveLevel = this.debugSolo && this.level === 'off' ? 'deep' : this.level;
+    const base = this.mix * LEVEL_GAIN[effectiveLevel];
     const duck = this.duckingEnabled ? clamp(1 - mainLevel * 0.12, 0.86, 1) : 1;
     const transitionLift = transitioning ? 1.24 : 1;
     const soloBoost = this.debugSolo ? 2.6 : 1;
-    const target = this.level === 'off' ? 0 : clamp(base * duck * transitionLift * soloBoost, 0, 0.95);
-    console.info('[ReverseAtmosphere] reverse output gain', { target, level: this.level, mix: this.mix, debugSolo: this.debugSolo });
+    const target = clamp(base * duck * transitionLift * soloBoost, 0, 0.95);
+  
+    console.info('[ReverseAtmosphere] reverse output gain', {
+      target,
+      level: this.level,
+      effectiveLevel,
+      mix: this.mix,
+      debugSolo: this.debugSolo,
+    });
+  
     this.output.gain.rampTo(target, ramp);
   }
 
