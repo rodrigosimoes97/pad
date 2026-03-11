@@ -317,15 +317,30 @@ export class PadEngine {
     this.reverseAtmosphere.applyDuckingContext(settings.masterVolume, false);
   }
 
-  triggerReverseTest() {
-    this.log('reverse test fired');
-    this.reverseAtmosphere?.setDebugSolo(true);
-    this.reverseAtmosphere?.triggerDebugPulse();
-    this.reverseAtmosphere?.triggerTransitionSwell(1.45);
-    window.setTimeout(() => {
-      this.reverseAtmosphere?.setDebugSolo(this.current.reverseDebugSolo);
-    }, 900);
-  }
+triggerReverseTest() {
+  this.log('reverse test fired');
+
+  if (!this.reverseAtmosphere) return;
+
+  const prevLevel = this.current.reverseAtmosphere;
+  const prevMix = this.current.reverseMix;
+  const prevSolo = this.current.reverseDebugSolo;
+
+  this.reverseAtmosphere.setAmount(prevLevel === 'off' ? 'deep' : prevLevel);
+  this.reverseAtmosphere.setMix(Math.max(prevMix, 0.45));
+  this.reverseAtmosphere.setDebugSolo(true);
+  this.reverseAtmosphere.applyDuckingContext(this.current.masterVolume, true);
+
+  this.reverseAtmosphere.triggerDebugPulse();
+  this.reverseAtmosphere.triggerTransitionSwell(1.45);
+
+  window.setTimeout(() => {
+    this.reverseAtmosphere?.setAmount(prevLevel);
+    this.reverseAtmosphere?.setMix(prevMix);
+    this.reverseAtmosphere?.setDebugSolo(prevSolo);
+    this.reverseAtmosphere?.applyDuckingContext(this.current.masterVolume, false);
+  }, 1200);
+}
 
   async playOrToggle(nextKey: PadSettings['key']): Promise<boolean> {
     if (this.playing && this.current.key === nextKey && !this.current.hold) {
