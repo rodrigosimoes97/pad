@@ -162,6 +162,14 @@ export class ReverseAtmosphere {
     this.initialized = true;
   }
 
+    private connectOutputTarget(target: AudioNode | AudioParam) {
+    if ('setValueAtTime' in target) {
+      this.output.connect(target as AudioParam);
+    } else {
+      this.output.connect(target as AudioNode);
+    }
+  }
+
   connect(destination: Tone.ToneAudioNode | AudioNode | AudioParam) {
     const maybeTone = destination as Tone.ToneAudioNode & {
       input?: AudioNode | AudioParam;
@@ -169,12 +177,10 @@ export class ReverseAtmosphere {
 
     const target = maybeTone.input;
 
-    if (target instanceof AudioNode || target instanceof AudioParam) {
-      this.output.connect(target);
-    } else if (destination instanceof AudioNode || destination instanceof AudioParam) {
-      this.output.connect(destination);
+    if (target) {
+      this.connectOutputTarget(target);
     } else {
-      throw new Error('Unsupported reverse destination');
+      this.connectOutputTarget(destination as AudioNode | AudioParam);
     }
 
     console.info('[ReverseAtmosphere] real reverse connected');
