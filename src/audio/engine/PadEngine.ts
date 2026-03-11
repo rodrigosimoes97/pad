@@ -60,6 +60,7 @@ export class PadEngine {
   private reverseAtmosphere: ReverseAtmosphere | null = null;
   private useConvolver = false;
   private masterConnected = false;
+  private irLoadStarted = false;
 
   constructor(initial: PadSettings) {
     this.current = initial;
@@ -109,7 +110,7 @@ export class PadEngine {
     this.masterLfo = new Tone.LFO({ frequency: 0.03, min: 1600, max: 2200 }).connect(this.masterFilter.frequency).start();
     this.ampLfo = new Tone.LFO({ frequency: 0.02, min: 0.98, max: 1.02 }).connect(this.master.gain).start();
 
-    await this.tryLoadConvolutionIR();
+    this.startBackgroundIrLoad();
 
     this.reverseAtmosphere = new ReverseAtmosphere();
     await this.reverseAtmosphere.init();
@@ -121,8 +122,10 @@ export class PadEngine {
   }
 
   async ensureAudioUnlocked(): Promise<boolean> {
-    await this.ensureInitialized();
-    if (this.getAudioContextState() === 'running') return true;
+    if (this.getAudioContextState() === 'running') {
+      await this.ensureInitialized();
+      return true;
+    }
     if (this.unlockInProgress) return false;
 
     this.unlockInProgress = true;
@@ -131,6 +134,7 @@ export class PadEngine {
     this.log('audio context before resume=', this.getAudioContextState());
 
     try {
+      this.log('Tone.start executing');
       await Tone.start();
       if (Tone.getContext().rawContext.state !== 'running') {
         await Tone.getContext().rawContext.resume();
@@ -140,6 +144,9 @@ export class PadEngine {
       if (this.getAudioContextState() !== 'running') {
         throw new Error(`AudioContext state is ${this.getAudioContextState()}`);
       }
+
+      await this.ensureInitialized();
+      this.log('ensureInitialized executed after unlock');
 
       if (this.master) {
         this.master.disconnect();
@@ -173,15 +180,25 @@ export class PadEngine {
     return this.getAudioContextState() === 'running';
   }
 
+
+  private startBackgroundIrLoad() {
+    if (this.irLoadStarted) return;
+    this.irLoadStarted = true;
+    void this.tryLoadConvolutionIR();
+  }
+
   private async tryLoadConvolutionIR() {
     try {
       const irUrl = `${import.meta.env.BASE_URL}irs/church-impulse.wav`;
+      this.log('background IR load started');
       const response = await fetch(irUrl);
       if (!response.ok) return;
       this.convolver = new Tone.Convolver(irUrl);
       this.useConvolver = true;
+      this.log('background IR load completed');
     } catch {
       this.useConvolver = false;
+      this.log('background IR load failed; using algorithmic reverb');
     }
   }
 
@@ -245,7 +262,8 @@ export class PadEngine {
     preFilter.chain(shimmerEq, chorus, stereo, saturation);
     saturation.connect(dryGain);
     saturation.connect(reverbSend);
-    this.reverseAtmosphere?.connectInput(preFilter);
+    this.reverseAtmosphere?.connectInput(saturation);
+    this.log('reverse input point= saturation');
 
     if (this.useConvolver && this.convolver) {
       reverbSend.connect(this.convolver);
@@ -301,8 +319,12 @@ export class PadEngine {
 
   triggerReverseTest() {
     this.log('reverse test fired');
+    this.reverseAtmosphere?.setDebugSolo(true);
     this.reverseAtmosphere?.triggerDebugPulse();
-    this.reverseAtmosphere?.triggerTransitionSwell(1.28);
+    this.reverseAtmosphere?.triggerTransitionSwell(1.45);
+    window.setTimeout(() => {
+      this.reverseAtmosphere?.setDebugSolo(this.current.reverseDebugSolo);
+    }, 900);
   }
 
   async playOrToggle(nextKey: PadSettings['key']): Promise<boolean> {
@@ -412,7 +434,7 @@ export class PadEngine {
   }
 
   private disposeStack(stack: VoiceStack) {
-    this.reverseAtmosphere?.disconnectInput(stack.preFilter);
+    this.reverseAtmosphere?.disconnectInput(stack.saturation);
     Object.values(stack.layers).forEach((layer) => {
       layer.synth.dispose();
       layer.gain.dispose();
