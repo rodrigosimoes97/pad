@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PadEngine } from './audio/engine/PadEngine';
 import { WORSHIP_PRESETS } from './audio/presets/worshipPresets';
-import { KEYS, type FadeTime, type HarmonicStructure, type Mode, type MotionLevel, type PadSettings, type ReverbType, type WorshipPresetName } from './types/pad';
+import { KEYS, type FadeTime, type HarmonicStructure, type Mode, type MotionLevel, type PadSettings, type ReverseAtmosphereLevel, type ReversePreDelay, type ReverbType, type WorshipPresetName } from './types/pad';
 import { saveSettings, loadSettings } from './utils/settingsStorage';
 
 const STRUCTURES: Array<{ value: HarmonicStructure; label: string }> = [
@@ -18,6 +18,8 @@ const REVERBS: ReverbType[] = ['hall', 'church', 'cathedral', 'ambient'];
 const MOTIONS: MotionLevel[] = ['off', 'slow', 'medium', 'deep'];
 const FADES_IN: FadeTime[] = [0.5, 1, 2, 4];
 const FADES_OUT: FadeTime[] = [1, 2, 4, 6];
+const REVERSE_LEVELS: ReverseAtmosphereLevel[] = ['off', 'light', 'medium', 'deep'];
+const REVERSE_PRE_DELAYS: ReversePreDelay[] = ['short', 'medium', 'long'];
 
 const engine = new PadEngine(loadSettings());
 
@@ -202,6 +204,35 @@ export default function App() {
               <select className="input mt-1" value={settings.reverbType} onChange={(e) => void applySettings({ reverbType: e.target.value as ReverbType })}>
                 {REVERBS.map((type) => <option key={type} value={type}>{type}</option>)}
               </select>
+            </label>
+          </div>
+        </section>
+
+        <section className={section}>
+          <h2 className="mb-3 text-sm font-semibold text-slate-300">Reverse Atmosphere</h2>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <label className="text-xs">Reverse Atmosphere
+              <select className="input mt-1" value={settings.reverseAtmosphere} onChange={(e) => void applySettings({ reverseAtmosphere: e.target.value as ReverseAtmosphereLevel })}>
+                {REVERSE_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+              </select>
+            </label>
+            <label className="text-xs">Reverse Pre-Delay
+              <select className="input mt-1" value={settings.reversePreDelay} onChange={(e) => void applySettings({ reversePreDelay: e.target.value as ReversePreDelay })}>
+                {REVERSE_PRE_DELAYS.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </label>
+            <label className="text-xs flex items-end gap-2">
+              <input type="checkbox" checked={settings.reverseDucking} onChange={(e) => void applySettings({ reverseDucking: e.target.checked })} />
+              Reverse Ducking
+            </label>
+            <label className="text-xs">Reverse Mix ({Math.round(settings.reverseMix * 100)}%)
+              <input className="w-full" type="range" min="0" max="0.35" step="0.01" value={settings.reverseMix} onChange={(e) => void applySettings({ reverseMix: Number(e.target.value) })} />
+            </label>
+            <label className="text-xs">Reverse Tone
+              <input className="w-full" type="range" min="0" max="1" step="0.01" value={settings.reverseTone} onChange={(e) => void applySettings({ reverseTone: Number(e.target.value) })} />
+            </label>
+            <label className="text-xs">Reverse Width
+              <input className="w-full" type="range" min="0" max="1" step="0.01" value={settings.reverseWidth} onChange={(e) => void applySettings({ reverseWidth: Number(e.target.value) })} />
             </label>
           </div>
         </section>
