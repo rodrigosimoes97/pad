@@ -29,10 +29,15 @@ type ActiveSource = {
 
 export class ReverseAtmosphere {
   private readonly liveCtx: AudioContext;
+
   private readonly input: GainNode;
   private readonly captureTap: GainNode;
-  private readonly captureProcessor: ScriptProcessorNode;
-  private readonly captureSilentGain: GainNode;
+
+  private readonly captureSplitter: ChannelSplitterNode;
+  private readonly captureAnalyserL: AnalyserNode;
+  private readonly captureAnalyserR: AnalyserNode;
+  private readonly captureBufferL: Float32Array;
+  private readonly captureBufferR: Float32Array;
 
   private readonly output: GainNode;
   private readonly wetGain: GainNode;
@@ -63,6 +68,7 @@ export class ReverseAtmosphere {
   private initialized = false;
   private disposed = false;
 
+  private captureRafId: number | null = null;
   private activeSources = new Set<ActiveSource>();
 
   constructor() {
@@ -74,6 +80,7 @@ export class ReverseAtmosphere {
       typeof raw.createBuffer !== 'function' ||
       typeof raw.createBufferSource !== 'function' ||
       typeof raw.createDelay !== 'function' ||
+      typeof raw.createAnalyser !== 'function' ||
       typeof raw.currentTime !== 'number'
     ) {
       throw new Error('ReverseAtmosphere could not access a valid audio context');
@@ -87,9 +94,18 @@ export class ReverseAtmosphere {
     this.captureTap = this.liveCtx.createGain();
     this.captureTap.gain.value = 1;
 
-    this.captureProcessor = this.liveCtx.createScriptProcessor(1024, 2, 2);
-    this.captureSilentGain = this.liveCtx.createGain();
-    this.captureSilentGain.gain.value = 0;
+    this.captureSplitter = this.liveCtx.createChannelSplitter(2);
+
+    this.captureAnalyserL = this.liveCtx.createAnalyser();
+    this.captureAnalyserL.fftSize = 2048;
+    this.captureAnalyserL.smoothingTimeConstant = 0;
+
+    this.captureAnalyserR = this.liveCtx.createAnalyser();
+    this.captureAnalyserR.fftSize = 2048;
+    this.captureAnalyserR.smoothingTimeConstant = 0;
+
+    this.captureBufferL = new Float32Array(this.captureAnalyserL.fftSize);
+    this.captureBufferR = new Float32Array(this.captureAnalyserR.fftSize);
 
     this.output = this.liveCtx.createGain();
     this.output.gain.value = 0;
@@ -122,9 +138,9 @@ export class ReverseAtmosphere {
     this.ringR = new Float32Array(this.ringLength);
 
     this.input.connect(this.captureTap);
-    this.captureTap.connect(this.captureProcessor);
-    this.captureProcessor.connect(this.captureSilentGain);
-    this.captureSilentGain.connect(this.liveCtx.destination);
+    this.captureTap.connect(this.captureSplitter);
+    this.captureSplitter.connect(this.captureAnalyserL, 0);
+    this.captureSplitter.connect(this.captureAnalyserR, 1);
 
     this.hp.connect(this.lp);
     this.lp.connect(this.preDelay);
@@ -143,24 +159,6 @@ export class ReverseAtmosphere {
     this.merger.connect(this.wetGain);
     this.wetGain.connect(this.output);
 
-    this.captureProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
-      if (this.disposed) return;
-
-      const inputL = event.inputBuffer.getChannelData(0);
-      const inputR =
-        event.inputBuffer.numberOfChannels > 1
-          ? event.inputBuffer.getChannelData(1)
-          : inputL;
-
-      for (let i = 0; i < inputL.length; i += 1) {
-        this.ringL[this.writeIndex] = inputL[i];
-        this.ringR[this.writeIndex] = inputR[i];
-        this.writeIndex = (this.writeIndex + 1) % this.ringLength;
-      }
-
-      this.capturedSamples = Math.min(this.capturedSamples + inputL.length, this.ringLength);
-    };
-
     this.applyTone(this.tone);
     this.applyWidth(this.width);
     this.applyOutputGain(false, 0.01);
@@ -168,6 +166,40 @@ export class ReverseAtmosphere {
 
   async init(): Promise<void> {
     this.initialized = true;
+    this.startCaptureLoop();
+  }
+
+  private startCaptureLoop(): void {
+    if (this.captureRafId !== null) return;
+
+    const tick = () => {
+      if (this.disposed) return;
+
+      this.captureAnalyserL.getFloatTimeDomainData(this.captureBufferL);
+      this.captureAnalyserR.getFloatTimeDomainData(this.captureBufferR);
+
+      for (let i = 0; i < this.captureBufferL.length; i += 1) {
+        this.ringL[this.writeIndex] = this.captureBufferL[i];
+        this.ringR[this.writeIndex] = this.captureBufferR[i];
+        this.writeIndex = (this.writeIndex + 1) % this.ringLength;
+      }
+
+      this.capturedSamples = Math.min(
+        this.capturedSamples + this.captureBufferL.length,
+        this.ringLength,
+      );
+
+      this.captureRafId = window.requestAnimationFrame(tick);
+    };
+
+    this.captureRafId = window.requestAnimationFrame(tick);
+  }
+
+  private stopCaptureLoop(): void {
+    if (this.captureRafId !== null) {
+      window.cancelAnimationFrame(this.captureRafId);
+      this.captureRafId = null;
+    }
   }
 
   private connectOutputTarget(target: AudioNode | AudioParam): void {
@@ -349,8 +381,6 @@ export class ReverseAtmosphere {
     durationSeconds: number,
     strength: number,
   ): AudioBuffer | null {
-    void strength;
-
     if (this.capturedSamples < Math.floor(this.liveCtx.sampleRate * 0.12)) return null;
 
     const wanted = Math.min(
@@ -457,7 +487,7 @@ export class ReverseAtmosphere {
     if (this.disposed) return;
     this.disposed = true;
 
-    this.captureProcessor.onaudioprocess = null;
+    this.stopCaptureLoop();
 
     for (const active of this.activeSources) {
       try {
@@ -490,12 +520,17 @@ export class ReverseAtmosphere {
       // ignore
     }
     try {
-      this.captureProcessor.disconnect();
+      this.captureSplitter.disconnect();
     } catch {
       // ignore
     }
     try {
-      this.captureSilentGain.disconnect();
+      this.captureAnalyserL.disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      this.captureAnalyserR.disconnect();
     } catch {
       // ignore
     }
