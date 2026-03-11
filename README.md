@@ -1,99 +1,86 @@
-# Church Pad Player
+# Church Pad Player — Stage Edition
 
-App web musical (100% front-end) para tocar pads contínuos em contexto ao vivo, com foco em **uso no celular**, **troca rápida de tom** e **som ambiente suave para igreja**.
+Ferramenta de pad contínuo para worship, **100% front-end**, otimizada para uso ao vivo, mobile-first e deploy estático (GitHub Pages).
 
-## Destaques da versão atual
+## Novidades principais
 
-- **Performance Mode (mobile-first)** com grade de 12 pads grandes para troca instantânea de tom.
-- **Troca de tom sem parar o pad** com crossfade curto entre camadas (sem corte seco).
-- **Studio Mode** opcional para ajustes mais detalhados.
-- Engine de áudio com Tone.js e cadeia musical: synth + filter + chorus + reverb + limiter.
-- Presets: **Soft, Warm, Bright, Shimmer, Deep**.
-- Controles ao vivo em tempo real:
-  - Volume
-  - Reverb
-  - Brightness (Tone)
-- Recursos de palco:
-  - Start / Stop / Panic
-  - Hold
-  - Fade Out
-- Persistência de preferências no `localStorage`:
-  - tom, oitava, estrutura, preset
-  - volume, reverb, brightness, hold
-  - modo da interface e painel avançado
+- Nova engine em **múltiplas camadas**: Warm, Shimmer, Choir/Air e Low/Sub.
+- Nova cadeia de áudio: camadas → filtro/EQ → chorus/stereo widener → reverb send/dry mix → saturação leve → limiter.
+- **Motion orgânico** (Off/Slow/Medium/Deep) com modulação lenta de filtro, amplitude e estéreo.
+- Sistema harmônico expandido com **Key + Mode (Major/Minor)** e estruturas:
+  - Root
+  - Root + 5
+  - Root + 5 + 8
+  - Add2
+  - Sus2
+  - Sus4
+  - Open Worship
+- Presets worship prontos (incluindo compatibilidade com presets legados).
+- Fade In/Fade Out configuráveis e **Smooth Stop**.
+- Atalhos de teclado para palco.
+- Persistência robusta no `localStorage` com validação.
+- PWA básico: `manifest.webmanifest`, service worker e cache offline essencial.
 
-## Stack
+## Arquitetura atual
 
-- Vite
-- React
-- TypeScript
-- Tailwind CSS
-- Tone.js
+```text
+src/
+  audio/
+    engine/
+      PadEngine.ts
+      harmony.ts
+    presets/
+      worshipPresets.ts
+  types/
+    pad.ts
+  utils/
+    settingsStorage.ts
+  App.tsx
+  main.tsx
+  styles.css
+public/
+  icons/
+    icon-192.svg
+    icon-512.svg
+  manifest.webmanifest
+  sw.js
+  irs/
+```
 
-## Como rodar localmente
+## Reverb e IR (convolution)
+
+- A engine tenta carregar IR em `public/irs/church-impulse.wav`.
+- Se o arquivo não existir (ou não carregar), usa fallback automático para `Tone.Reverb`.
+- Essa estratégia evita quebrar mobile/navegadores com suporte limitado.
+
+## Atalhos de teclado
+
+- `Space`: Start / Smooth Stop (toggle principal)
+- `Esc`: Panic
+- `←` / `→`: navega entre tons
+- `1..8`: seleciona presets principais
+
+## Rodando localmente
 
 ```bash
 npm install
 npm run dev
 ```
 
-Build de produção:
+Build:
 
 ```bash
 npm run build
 npm run preview
 ```
 
-## Observação importante sobre áudio
+## GitHub Pages
 
-Browsers exigem gesto do usuário para liberar áudio. Use **Start** (ou toque em um pad) para inicializar o contexto (`Tone.start()`).
+- O projeto usa `base` em `vite.config.ts` (`/pad/`).
+- Mantenha os assets públicos compatíveis com esse base path.
+- Manifest/service worker já estão preparados para o path `/pad/`.
 
-## Deploy no GitHub Pages
+## Limitações conhecidas
 
-### 1) Ajustar o `base` no Vite
-
-Edite `vite.config.ts` e ajuste `repoName` para o nome do seu repositório:
-
-```ts
-const repoName = 'church-pad-player';
-```
-
-Exemplo: `https://seu-usuario.github.io/meu-repo/` → `repoName = 'meu-repo'`.
-
-### 2) Habilitar Pages por GitHub Actions
-
-No GitHub: **Settings → Pages → Source: GitHub Actions**.
-
-### 3) Push para `main`
-
-O workflow `.github/workflows/deploy.yml` já:
-- instala dependências
-- gera build
-- cria `404.html` para fallback SPA
-- publica no GitHub Pages
-
-## Estrutura principal
-
-```text
-src/
-  audio/
-    audioTypes.ts
-    padEngine.ts
-    presets.ts
-  components/
-    ControlPanel.tsx
-    PadButton.tsx
-    PerformancePadGrid.tsx
-    SliderControl.tsx
-    StatusBar.tsx
-    StudioPanel.tsx
-  hooks/
-    useLocalStorageState.ts
-    usePadSettings.ts
-  utils/
-    cn.ts
-    notes.ts
-  App.tsx
-  main.tsx
-  styles.css
-```
+- Convolution IR depende da presença de `public/irs/church-impulse.wav`.
+- Em dispositivos muito limitados, o fallback algorítmico ainda é preferível para estabilidade.

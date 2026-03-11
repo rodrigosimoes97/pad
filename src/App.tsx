@@ -1,211 +1,238 @@
-import { useMemo, useState } from 'react';
-import { padEngine, type PadPresetName, type PadStructure } from './audio/padEngine';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { PadEngine } from './audio/engine/PadEngine';
+import { WORSHIP_PRESETS } from './audio/presets/worshipPresets';
+import { KEYS, type FadeTime, type HarmonicStructure, type Mode, type MotionLevel, type PadSettings, type ReverbType, type WorshipPresetName } from './types/pad';
+import { saveSettings, loadSettings } from './utils/settingsStorage';
 
-const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
-
-const estruturas: Array<{ value: PadStructure; label: string }> = [
-  { value: 'root', label: '1' },
-  { value: 'root-fifth', label: '1 + 5' },
-  { value: 'root-fifth-octave', label: '1 + 5 + 8' },
+const STRUCTURES: Array<{ value: HarmonicStructure; label: string }> = [
+  { value: 'root', label: 'Root' },
+  { value: 'root-fifth', label: 'Root + 5' },
+  { value: 'root-fifth-octave', label: 'Root + 5 + 8' },
+  { value: 'add2', label: 'Add2' },
+  { value: 'sus2', label: 'Sus2' },
+  { value: 'sus4', label: 'Sus4' },
+  { value: 'open-worship', label: 'Open Worship' },
 ];
 
+const REVERBS: ReverbType[] = ['hall', 'church', 'cathedral', 'ambient'];
+const MOTIONS: MotionLevel[] = ['off', 'slow', 'medium', 'deep'];
+const FADES_IN: FadeTime[] = [0.5, 1, 2, 4];
+const FADES_OUT: FadeTime[] = [1, 2, 4, 6];
+
+const engine = new PadEngine(loadSettings());
+
+const section = 'rounded-2xl border border-white/10 bg-slate-900/75 p-3 shadow-xl';
+
 export default function App() {
-  const [note, setNote] = useState<string>('C');
-  const [octave, setOctave] = useState<number>(3);
-  const [structure, setStructure] = useState<PadStructure>('root');
-  const [preset, setPreset] = useState<PadPresetName>('warm');
-  const [volume, setVolume] = useState<number>(0.7);
-  const [reverb, setReverb] = useState<number>(0.35);
-  const [brightness, setBrightness] = useState<number>(1);
-  const [playing, setPlaying] = useState<boolean>(false);
-  const [audioHintVisible, setAudioHintVisible] = useState(true);
+  const [settings, setSettings] = useState<PadSettings>(engine.settings);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [performanceMode, setPerformanceMode] = useState(true);
+  const [loadingAudio, setLoadingAudio] = useState(false);
+  const [audioReady, setAudioReady] = useState(false);
+  const ignoreKeyboard = useRef(false);
 
-  const statusText = useMemo(() => (playing ? 'Tocando' : 'Parado'), [playing]);
+  useEffect(() => {
+    saveSettings(settings);
+  }, [settings]);
 
-  const handleNoteTouch = async (nextNote: string) => {
-    await padEngine.ensureStartedFromGesture();
-    setAudioHintVisible(false);
+  const applySettings = async (patch: Partial<PadSettings>) => {
+    const next = { ...settings, ...patch, layers: { ...settings.layers, ...patch.layers } };
+    setSettings(next);
+    await engine.updateSettings(patch);
+  };
 
-    const isPlaying = await padEngine.toggleOrSwitchPad(nextNote);
-    setPlaying(isPlaying);
+  const onStart = async () => {
+    setLoadingAudio(true);
+    await engine.ensureStartedFromGesture();
+    await engine.start(settings);
+    setAudioReady(true);
+    setLoadingAudio(false);
+    setIsPlaying(true);
+  };
 
-    if (isPlaying) {
-      setNote(nextNote);
+  const onSmoothStop = () => {
+    engine.smoothStop();
+    setIsPlaying(false);
+  };
+
+  const onPanic = () => {
+    engine.panic();
+    setIsPlaying(false);
+  };
+
+  const onPadTap = async (key: PadSettings['key']) => {
+    setLoadingAudio(true);
+    await engine.ensureStartedFromGesture();
+    const nextPlaying = await engine.playOrToggle(key);
+    setAudioReady(true);
+    setLoadingAudio(false);
+    setIsPlaying(nextPlaying);
+    if (nextPlaying) {
+      setSettings((prev) => ({ ...prev, key }));
     }
   };
 
-  const handlePresetChange = async (nextPreset: PadPresetName) => {
-    setPreset(nextPreset);
-    await padEngine.updateSettings({ preset: nextPreset });
-  };
+  const status = useMemo(() => (isPlaying ? 'AO VIVO' : 'PARADO'), [isPlaying]);
 
-  const handleOctaveChange = async (nextOctave: number) => {
-    setOctave(nextOctave);
-    await padEngine.updateSettings({ octave: nextOctave });
-  };
+  useEffect(() => {
+    const handler = async (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isInput = target?.matches('input, select, textarea');
+      if (ignoreKeyboard.current || isInput) return;
 
-  const handleStructureChange = async (nextStructure: PadStructure) => {
-    setStructure(nextStructure);
-    await padEngine.updateSettings({ structure: nextStructure });
-  };
+      if (event.code === 'Space') {
+        event.preventDefault();
+        if (isPlaying) onSmoothStop();
+        else await onStart();
+      }
+
+      if (event.key === 'Escape') {
+        onPanic();
+      }
+
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        const idx = KEYS.indexOf(settings.key);
+        const key = KEYS[(idx + 1) % KEYS.length];
+        await onPadTap(key);
+      }
+
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        const idx = KEYS.indexOf(settings.key);
+        const key = KEYS[(idx - 1 + KEYS.length) % KEYS.length];
+        await onPadTap(key);
+      }
+
+      if (/^[1-8]$/.test(event.key)) {
+        const presetList = Object.keys(WORSHIP_PRESETS) as WorshipPresetName[];
+        const preset = presetList[Number(event.key) - 1];
+        if (preset) {
+          await applySettings({ preset, ...WORSHIP_PRESETS[preset] });
+        }
+      }
+    };
+
+    const wrapped = (event: KeyboardEvent) => void handler(event);
+    window.addEventListener('keydown', wrapped);
+    return () => window.removeEventListener('keydown', wrapped);
+  }, [settings, isPlaying]);
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      <div className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-3 px-3 pb-5 pt-3 sm:pt-4">
-        <section className="rounded-3xl border border-white/10 bg-zinc-900/90 p-3 shadow-2xl">
-          <div className="mb-1 flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-400">Church Pad Player</p>
-              <h1 className="text-4xl font-black leading-none">{note}</h1>
-              <p className="mt-1 text-sm text-zinc-300">Tom atual</p>
-            </div>
-
-            <div className="text-right">
-              <p
-                className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${
-                  playing ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-400'
-                }`}
-              >
-                {statusText}
-              </p>
-              <p className="mt-2 text-xs text-zinc-400">Preset</p>
-              <p className="text-sm font-semibold text-zinc-200">{preset === 'warm' ? 'Warm Pad' : preset === 'soft' ? 'Soft Pad' : preset === 'bright' ? 'Bright Pad' : preset === 'shimmer' ? 'Shimmer Pad' : 'Deep Pad'}</p>
-            </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-3 pb-8 pt-4">
+        <header className={`${section} flex items-center justify-between`}>
+          <div>
+            <p className="text-xs uppercase tracking-[0.22em] text-violet-200/80">Church Pad Player · Stage Edition</p>
+            <p className="text-2xl font-black">{settings.key} {settings.mode === 'major' ? 'Major' : 'Minor'}</p>
           </div>
+          <div className="text-right">
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${isPlaying ? 'bg-emerald-400/20 text-emerald-300' : 'bg-slate-800 text-slate-400'}`}>{status}</span>
+            <p className="mt-2 text-xs text-slate-400">{audioReady ? 'Áudio pronto' : 'Toque em Start para liberar áudio'}</p>
+          </div>
+        </header>
 
-          {audioHintVisible && (
-            <p className="rounded-xl border border-violet-300/20 bg-violet-500/10 px-3 py-2 text-xs text-violet-200">
-              Toque em um tom para ativar o áudio.
-            </p>
+        <section className={`${section} grid grid-cols-2 gap-2 sm:grid-cols-4`}>
+          <button className="btn-primary" onClick={() => void onStart()}>Start</button>
+          <button className="btn-muted" onClick={onSmoothStop}>Smooth Stop</button>
+          <button className="btn-danger" onClick={onPanic}>Panic</button>
+          <button className={`btn-muted ${settings.hold ? 'bg-amber-500 text-black' : ''}`} onClick={() => void applySettings({ hold: !settings.hold })}>Hold</button>
+        </section>
+
+        <section className={section}>
+          <h2 className="mb-2 text-sm font-semibold text-slate-300">Key / Mode / Structure</h2>
+          <div className="grid grid-cols-3 gap-2 md:grid-cols-6">
+            <select className="input" value={settings.key} onChange={(e) => void applySettings({ key: e.target.value as PadSettings['key'] })}>
+              {KEYS.map((key) => <option key={key}>{key}</option>)}
+            </select>
+            <select className="input" value={settings.mode} onChange={(e) => void applySettings({ mode: e.target.value as Mode })}>
+              <option value="major">Major</option><option value="minor">Minor</option>
+            </select>
+            <select className="input col-span-2" value={settings.structure} onChange={(e) => void applySettings({ structure: e.target.value as HarmonicStructure })}>
+              {STRUCTURES.map((structure) => <option key={structure.value} value={structure.value}>{structure.label}</option>)}
+            </select>
+            <select className="input" value={settings.octave} onChange={(e) => void applySettings({ octave: Number(e.target.value) })}>
+              {[2, 3, 4, 5].map((oct) => <option key={oct} value={oct}>{oct}</option>)}
+            </select>
+            <select className="input" value={settings.motion} onChange={(e) => void applySettings({ motion: e.target.value as MotionLevel })}>
+              {MOTIONS.map((motion) => <option key={motion} value={motion}>{motion}</option>)}
+            </select>
+          </div>
+        </section>
+
+        <section className={section}>
+          <h2 className="mb-2 text-sm font-semibold text-slate-300">Worship Presets</h2>
+          <select
+            className="input"
+            value={settings.preset}
+            onChange={(e) => {
+              const preset = e.target.value as WorshipPresetName;
+              void applySettings({ preset, ...WORSHIP_PRESETS[preset] });
+            }}
+          >
+            {(Object.keys(WORSHIP_PRESETS) as WorshipPresetName[]).map((name) => <option key={name} value={name}>{WORSHIP_PRESETS[name].label}</option>)}
+          </select>
+        </section>
+
+        <section className={section}>
+          <h2 className="mb-3 text-sm font-semibold text-slate-300">Layer Mixer</h2>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {(['warm', 'shimmer', 'choir', 'low'] as const).map((layer) => (
+              <label className="text-xs text-slate-300" key={layer}>{layer.toUpperCase()}
+                <input className="w-full" type="range" min="0" max="1" step="0.01" value={settings.layers[layer]} onChange={(e) => void applySettings({ layers: { ...settings.layers, [layer]: Number(e.target.value) } })} />
+              </label>
+            ))}
+          </div>
+        </section>
+
+        <section className={section}>
+          <h2 className="mb-3 text-sm font-semibold text-slate-300">FX</h2>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <label className="text-xs">Master
+              <input className="w-full" type="range" min="0" max="0.9" step="0.01" value={settings.masterVolume} onChange={(e) => void applySettings({ masterVolume: Number(e.target.value) })} />
+            </label>
+            <label className="text-xs">Brightness
+              <input className="w-full" type="range" min="0.7" max="1.4" step="0.01" value={settings.brightness} onChange={(e) => void applySettings({ brightness: Number(e.target.value) })} />
+            </label>
+            <label className="text-xs">Reverb Mix
+              <input className="w-full" type="range" min="0" max="0.8" step="0.01" value={settings.reverbMix} onChange={(e) => void applySettings({ reverbMix: Number(e.target.value) })} />
+            </label>
+            <label className="text-xs">Reverb Type
+              <select className="input mt-1" value={settings.reverbType} onChange={(e) => void applySettings({ reverbType: e.target.value as ReverbType })}>
+                {REVERBS.map((type) => <option key={type} value={type}>{type}</option>)}
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section className={section}>
+          <button className="btn-muted w-full" onClick={() => setAdvancedOpen((v) => !v)}>{advancedOpen ? 'Ocultar Studio Panel' : 'Abrir Studio Panel'}</button>
+          {advancedOpen && (
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <label className="text-xs">Fade In
+                <select className="input mt-1" value={settings.fadeIn} onChange={(e) => void applySettings({ fadeIn: Number(e.target.value) as FadeTime })}>{FADES_IN.map((v) => <option key={v} value={v}>{v}s</option>)}</select>
+              </label>
+              <label className="text-xs">Fade Out
+                <select className="input mt-1" value={settings.fadeOut} onChange={(e) => void applySettings({ fadeOut: Number(e.target.value) as FadeTime })}>{FADES_OUT.map((v) => <option key={v} value={v}>{v}s</option>)}</select>
+              </label>
+            </div>
           )}
         </section>
 
-        <section className="grid grid-cols-4 gap-2">
-          {NOTES.map((n) => {
-            const active = note === n && playing;
-            return (
-              <button
-                key={n}
-                onClick={() => void handleNoteTouch(n)}
-                className={`h-16 rounded-2xl border text-lg font-black shadow-lg transition active:scale-[0.98] ${
-                  active
-                    ? 'border-cyan-200 bg-cyan-300 text-black shadow-[0_0_28px_rgba(34,211,238,0.42)]'
-                    : 'border-white/10 bg-zinc-900 text-white hover:bg-zinc-800'
-                }`}
-              >
-                {n}
-              </button>
-            );
-          })}
-        </section>
-
-        <section className="rounded-3xl border border-white/10 bg-zinc-900/90 p-3 shadow-2xl">
-          <div className="space-y-3">
-            <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Oitava</p>
-              <div className="grid grid-cols-4 gap-2">
-                {[2, 3, 4, 5].map((value) => (
-                  <button
-                    key={value}
-                    onClick={() => void handleOctaveChange(value)}
-                    className={`rounded-xl px-2 py-2 text-sm font-semibold transition ${
-                      octave === value
-                        ? 'bg-violet-500 text-white'
-                        : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                    }`}
-                  >
-                    {value}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Estrutura</p>
-              <div className="grid grid-cols-3 gap-2">
-                {estruturas.map((item) => (
-                  <button
-                    key={item.value}
-                    onClick={() => void handleStructureChange(item.value)}
-                    className={`rounded-xl px-2 py-2 text-xs font-semibold transition ${
-                      structure === item.value
-                        ? 'bg-violet-500 text-white'
-                        : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <label className="block text-sm text-zinc-300">
-              Timbre
-              <select
-                className="mt-1 w-full rounded-xl bg-zinc-800 p-2.5"
-                value={preset}
-                onChange={(e) => void handlePresetChange(e.target.value as PadPresetName)}
-              >
-                <option value="soft">Soft Pad</option>
-                <option value="warm">Warm Pad</option>
-                <option value="bright">Bright Pad</option>
-                <option value="shimmer">Shimmer Pad</option>
-                <option value="deep">Deep Pad</option>
-              </select>
-            </label>
-
-            <label className="block text-sm text-zinc-300">
-              Volume
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={volume}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setVolume(v);
-                  padEngine.setVolume(v);
-                }}
-              />
-            </label>
-
-            <label className="block text-sm text-zinc-300">
-              Reverb
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={reverb}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setReverb(v);
-                  padEngine.setReverbAmount(v);
-                }}
-              />
-            </label>
-
-            <label className="block text-sm text-zinc-300">
-              Brilho
-              <input
-                className="mt-1 w-full"
-                type="range"
-                min="0.5"
-                max="2"
-                step="0.01"
-                value={brightness}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setBrightness(v);
-                  padEngine.setBrightness(v);
-                }}
-              />
-            </label>
+        <section className={section}>
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-300">Performance Grid</h2>
+            <button className="btn-muted" onClick={() => setPerformanceMode((v) => !v)}>{performanceMode ? 'Studio View' : 'Performance View'}</button>
+          </div>
+          <div className={`grid gap-2 ${performanceMode ? 'grid-cols-3 sm:grid-cols-6' : 'grid-cols-6'}`}>
+            {KEYS.map((key) => (
+              <button key={key} onClick={() => void onPadTap(key)} className={`rounded-xl border px-3 py-4 text-lg font-black ${settings.key === key && isPlaying ? 'border-cyan-300 bg-cyan-300 text-black' : 'border-white/10 bg-slate-800 text-slate-100'}`}>{key}</button>
+            ))}
           </div>
         </section>
+
+        {loadingAudio && <p className="text-center text-xs text-violet-200">Carregando áudio...</p>}
       </div>
     </div>
   );
