@@ -28,7 +28,6 @@ type ActiveSource = {
 };
 
 export class ReverseAtmosphere {
-  private readonly ctx: BaseAudioContext;
   private readonly liveCtx: AudioContext;
   private readonly input: GainNode;
   private readonly captureTap: GainNode;
@@ -73,7 +72,6 @@ export class ReverseAtmosphere {
     }
 
     this.liveCtx = raw;
-    this.ctx = raw;
 
     this.input = this.liveCtx.createGain();
     this.input.gain.value = 1;
@@ -165,26 +163,31 @@ export class ReverseAtmosphere {
   }
 
   connect(destination: Tone.ToneAudioNode | AudioNode | AudioParam) {
-    const maybeTone = destination as Tone.ToneAudioNode & { input?: AudioNode | AudioParam };
-    const target = maybeTone.input ?? destination;
+    const maybeTone = destination as Tone.ToneAudioNode & {
+      input?: AudioNode | AudioParam;
+    };
 
-    if (target instanceof AudioNode) {
+    const target = maybeTone.input;
+
+    if (target instanceof AudioNode || target instanceof AudioParam) {
       this.output.connect(target);
+    } else if (destination instanceof AudioNode || destination instanceof AudioParam) {
+      this.output.connect(destination);
     } else {
-      this.output.connect(target);
+      throw new Error('Unsupported reverse destination');
     }
 
     console.info('[ReverseAtmosphere] real reverse connected');
   }
 
   connectInput(source: Tone.ToneAudioNode) {
-    source.connect(this.input);
+    Tone.connect(source, this.input);
     console.info('[ReverseAtmosphere] capture input connected');
   }
 
   disconnectInput(source: Tone.ToneAudioNode) {
     try {
-      source.disconnect(this.input);
+      Tone.disconnect(source, this.input);
     } catch {
       // ignore
     }
@@ -313,13 +316,6 @@ export class ReverseAtmosphere {
 
     source.start(now);
     source.stop(now + buffer.duration + 0.15);
-
-    console.info('[ReverseAtmosphere] reverse swell played', {
-      level: effectiveLevel,
-      duration: buffer.duration,
-      strength,
-      finalGain,
-    });
   }
 
   private createReverseBufferFromRing(durationSeconds: number, strength: number): AudioBuffer | null {
@@ -418,15 +414,6 @@ export class ReverseAtmosphere {
 
     this.wetGain.gain.setTargetAtTime(wet, this.liveCtx.currentTime, ramp);
     this.output.gain.setTargetAtTime(out, this.liveCtx.currentTime, ramp);
-
-    console.info('[ReverseAtmosphere] reverse gains', {
-      effectiveLevel,
-      wet,
-      out,
-      mix: this.mix,
-      debugSolo: this.debugSolo,
-      transitioning,
-    });
   }
 
   dispose() {
