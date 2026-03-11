@@ -23,6 +23,9 @@ type VoiceStack = {
   notes: string[];
 };
 
+export type AudioRuntimeStatus = 'locked' | 'unlocking' | 'ready' | 'error';
+
+const DEBUG_AUDIO = true;
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
 const MOTION_MAP: Record<MotionLevel, { filterDepth: number; ampDepth: number; rate: number; panAmount: number }> = {
@@ -42,6 +45,8 @@ const REVERB_CONFIG: Record<ReverbType, { decay: number; preDelay: number; damp:
 export class PadEngine {
   private initialized = false;
   private playing = false;
+  private unlockInProgress = false;
+  private unlockError: string | null = null;
   private activeStack: VoiceStack | null = null;
   private current: PadSettings;
 
@@ -59,6 +64,10 @@ export class PadEngine {
     this.current = initial;
   }
 
+  private log(...args: unknown[]) {
+    if (DEBUG_AUDIO) console.info('[PadEngine]', ...args);
+  }
+
   get settings() {
     return this.current;
   }
@@ -67,33 +76,94 @@ export class PadEngine {
     return this.playing;
   }
 
-  async ensureStartedFromGesture(): Promise<void> {
-    if (!this.initialized) {
-      this.master = new Tone.Gain(0.7);
-      this.masterFilter = new Tone.Filter({ type: 'lowpass', frequency: 2100, rolloff: -12, Q: 0.4 });
-      this.limiter = new Tone.Limiter(-1.5);
-      this.masterFilter.connect(this.limiter);
-      this.limiter.connect(this.master);
-      this.master.toDestination();
+  getAudioContextState(): AudioContextState {
+    return Tone.getContext().rawContext.state;
+  }
 
-      this.algoReverb = new Tone.Reverb(REVERB_CONFIG[this.current.reverbType]);
-      this.algoReverb.wet.value = 1;
+  getAudioStatus(): AudioRuntimeStatus {
+    if (this.unlockError) return 'error';
+    if (this.unlockInProgress) return 'unlocking';
+    return this.getAudioContextState() === 'running' ? 'ready' : 'locked';
+  }
 
-      this.masterLfo = new Tone.LFO({ frequency: 0.03, min: 1600, max: 2200 }).connect(this.masterFilter.frequency).start();
-      this.ampLfo = new Tone.LFO({ frequency: 0.02, min: 0.98, max: 1.02 }).connect(this.master.gain).start();
+  getAudioError() {
+    return this.unlockError;
+  }
 
-      await this.tryLoadConvolutionIR();
+  private async ensureInitialized(): Promise<void> {
+    if (this.initialized) return;
 
-      this.reverseAtmosphere = new ReverseAtmosphere();
-      await this.reverseAtmosphere.init();
-      this.reverseAtmosphere.connect(this.masterFilter);
-      this.applyReverseSettings(this.current);
+    this.master = new Tone.Gain(0.7);
+    this.masterFilter = new Tone.Filter({ type: 'lowpass', frequency: 2100, rolloff: -12, Q: 0.4 });
+    this.limiter = new Tone.Limiter(-1.5);
+    this.masterFilter.connect(this.limiter);
+    this.limiter.connect(this.master);
+    this.master.toDestination();
 
-      this.initialized = true;
+    this.algoReverb = new Tone.Reverb(REVERB_CONFIG[this.current.reverbType]);
+    this.algoReverb.wet.value = 1;
+
+    this.masterLfo = new Tone.LFO({ frequency: 0.03, min: 1600, max: 2200 }).connect(this.masterFilter.frequency).start();
+    this.ampLfo = new Tone.LFO({ frequency: 0.02, min: 0.98, max: 1.02 }).connect(this.master.gain).start();
+
+    await this.tryLoadConvolutionIR();
+
+    this.reverseAtmosphere = new ReverseAtmosphere();
+    await this.reverseAtmosphere.init();
+    this.reverseAtmosphere.connect(this.masterFilter);
+    this.applyReverseSettings(this.current);
+
+    this.initialized = true;
+    this.log('initialized audio graph, context=', this.getAudioContextState());
+  }
+
+  async ensureAudioUnlocked(): Promise<boolean> {
+    await this.ensureInitialized();
+    if (this.getAudioContextState() === 'running') return true;
+    if (this.unlockInProgress) return false;
+
+    this.unlockInProgress = true;
+    this.unlockError = null;
+    this.log('unlock attempt; context=', this.getAudioContextState());
+
+    try {
+      await Tone.start();
+      if (Tone.getContext().rawContext.state !== 'running') {
+        await Tone.getContext().rawContext.resume();
+      }
+
+      if (this.getAudioContextState() !== 'running') {
+        throw new Error(`AudioContext state is ${this.getAudioContextState()}`);
+      }
+
+      if (this.master) {
+        this.master.disconnect();
+        this.master.toDestination();
+      }
+
+      this.unlockError = null;
+      this.log('unlock completed; context=', this.getAudioContextState());
+      return true;
+    } catch (error) {
+      this.unlockError = error instanceof Error ? error.message : 'Falha ao habilitar áudio';
+      this.log('unlock failed:', this.unlockError);
+      return false;
+    } finally {
+      this.unlockInProgress = false;
     }
+  }
 
-    await Tone.start();
-    await Tone.getContext().resume();
+  async refreshAudioStateAfterVisibility(): Promise<boolean> {
+    if (!this.initialized) return false;
+    this.log('visibility refresh; context=', this.getAudioContextState());
+    if (this.getAudioContextState() === 'running') return true;
+    try {
+      await Tone.getContext().rawContext.resume();
+    } catch {
+      // resume can fail on mobile without user gesture
+    }
+    this.log('visibility refresh done; context=', this.getAudioContextState());
+    return this.getAudioContextState() === 'running';
   }
 
   private async tryLoadConvolutionIR() {
@@ -168,7 +238,7 @@ export class PadEngine {
     preFilter.chain(shimmerEq, chorus, stereo, saturation);
     saturation.connect(dryGain);
     saturation.connect(reverbSend);
-    this.reverseAtmosphere?.connectInput(saturation);
+    this.reverseAtmosphere?.connectInput(preFilter);
 
     if (this.useConvolver && this.convolver) {
       reverbSend.connect(this.convolver);
@@ -221,25 +291,30 @@ export class PadEngine {
     this.reverseAtmosphere.applyDuckingContext(settings.masterVolume, false);
   }
 
+  triggerReverseTest() {
+    this.reverseAtmosphere?.triggerTransitionSwell(1.18);
+  }
+
   async playOrToggle(nextKey: PadSettings['key']): Promise<boolean> {
-    await this.ensureStartedFromGesture();
     if (this.playing && this.current.key === nextKey && !this.current.hold) {
       this.smoothStop();
       return false;
     }
-    if (this.playing && this.current.key !== nextKey) this.reverseAtmosphere?.triggerTransitionSwell(0.72);
+    if (this.playing && this.current.key !== nextKey) this.reverseAtmosphere?.triggerTransitionSwell(0.9);
     await this.start({ ...this.current, key: nextKey });
     return true;
   }
 
   async start(settings = this.current): Promise<void> {
-    await this.ensureStartedFromGesture();
+    await this.ensureInitialized();
     this.current = settings;
     this.setReverbType(settings.reverbType);
     this.applyReverseSettings(settings);
 
     const stack = this.buildStack(settings);
     const now = Tone.now();
+
+    this.log('start triggered; context=', this.getAudioContextState());
 
     for (const [name, layer] of Object.entries(stack.layers) as [keyof LayerMix, LayerNodes][]) {
       const layerGain = clamp(settings.layers[name], 0, 1) * 0.55;
@@ -251,7 +326,7 @@ export class PadEngine {
     stack.outGain.gain.setValueAtTime(0, now);
     stack.outGain.gain.linearRampToValueAtTime(clamp(settings.masterVolume, 0, 0.9), now + settings.fadeIn);
 
-    this.reverseAtmosphere?.triggerTransitionSwell(this.playing ? 0.82 : 0.5);
+    this.reverseAtmosphere?.triggerTransitionSwell(this.playing ? 0.96 : 0.68);
 
     if (this.activeStack) {
       this.releaseStack(this.activeStack, settings.fadeOut);
@@ -261,7 +336,7 @@ export class PadEngine {
     this.playing = true;
     this.updateMotion(settings);
     this.reverseAtmosphere?.applyDuckingContext(settings.masterVolume, true);
-    window.setTimeout(() => this.reverseAtmosphere?.applyDuckingContext(settings.masterVolume, false), 420);
+    window.setTimeout(() => this.reverseAtmosphere?.applyDuckingContext(settings.masterVolume, false), 540);
   }
 
   async updateSettings(patch: Partial<PadSettings>) {
@@ -284,7 +359,7 @@ export class PadEngine {
       }
 
       if (patch.key || patch.mode || patch.structure || patch.octave || patch.preset) {
-        this.reverseAtmosphere?.triggerTransitionSwell(0.8);
+        this.reverseAtmosphere?.triggerTransitionSwell(0.95);
         await this.start(this.current);
       }
     }
@@ -292,12 +367,12 @@ export class PadEngine {
 
   smoothStop() {
     if (!this.activeStack) return;
-    this.reverseAtmosphere?.triggerTransitionSwell(0.6);
+    this.reverseAtmosphere?.triggerTransitionSwell(0.88);
     this.reverseAtmosphere?.applyDuckingContext(this.current.masterVolume, true);
     this.releaseStack(this.activeStack, this.current.fadeOut);
     this.activeStack = null;
     this.playing = false;
-    window.setTimeout(() => this.reverseAtmosphere?.applyDuckingContext(this.current.masterVolume, false), 380);
+    window.setTimeout(() => this.reverseAtmosphere?.applyDuckingContext(this.current.masterVolume, false), 440);
   }
 
   panic() {
@@ -319,7 +394,7 @@ export class PadEngine {
   }
 
   private disposeStack(stack: VoiceStack) {
-    this.reverseAtmosphere?.disconnectInput(stack.saturation);
+    this.reverseAtmosphere?.disconnectInput(stack.preFilter);
     Object.values(stack.layers).forEach((layer) => {
       layer.synth.dispose();
       layer.gain.dispose();

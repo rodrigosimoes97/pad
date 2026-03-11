@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { PadEngine } from './audio/engine/PadEngine';
+import { PadEngine, type AudioRuntimeStatus } from './audio/engine/PadEngine';
 import { WORSHIP_PRESETS } from './audio/presets/worshipPresets';
 import { KEYS, type FadeTime, type HarmonicStructure, type Mode, type MotionLevel, type PadSettings, type ReverseAtmosphereLevel, type ReversePreDelay, type ReverbType, type WorshipPresetName } from './types/pad';
 import { saveSettings, loadSettings } from './utils/settingsStorage';
@@ -25,18 +25,49 @@ const engine = new PadEngine(loadSettings());
 
 const section = 'rounded-2xl border border-white/10 bg-slate-900/75 p-3 shadow-xl';
 
+const AUDIO_LABELS: Record<AudioRuntimeStatus, string> = {
+  locked: 'Locked',
+  unlocking: 'Unlocking',
+  ready: 'Ready',
+  error: 'Error',
+};
+
 export default function App() {
   const [settings, setSettings] = useState<PadSettings>(engine.settings);
   const [isPlaying, setIsPlaying] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [performanceMode, setPerformanceMode] = useState(true);
   const [loadingAudio, setLoadingAudio] = useState(false);
-  const [audioReady, setAudioReady] = useState(false);
+  const [audioStatus, setAudioStatus] = useState<AudioRuntimeStatus>(engine.getAudioStatus());
+  const [audioError, setAudioError] = useState<string | null>(engine.getAudioError());
   const ignoreKeyboard = useRef(false);
+
+  const syncAudioState = () => {
+    setAudioStatus(engine.getAudioStatus());
+    setAudioError(engine.getAudioError());
+  };
+
+  const unlockAudioIfNeeded = async () => {
+    syncAudioState();
+    if (engine.getAudioStatus() === 'ready') return true;
+    const unlocked = await engine.ensureAudioUnlocked();
+    syncAudioState();
+    return unlocked;
+  };
 
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    const onVisibility = async () => {
+      if (document.visibilityState !== 'visible') return;
+      await engine.refreshAudioStateAfterVisibility();
+      syncAudioState();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
 
   const applySettings = async (patch: Partial<PadSettings>) => {
     const next = { ...settings, ...patch, layers: { ...settings.layers, ...patch.layers } };
@@ -46,11 +77,15 @@ export default function App() {
 
   const onStart = async () => {
     setLoadingAudio(true);
-    await engine.ensureStartedFromGesture();
+    const unlocked = await unlockAudioIfNeeded();
+    if (!unlocked) {
+      setLoadingAudio(false);
+      return;
+    }
     await engine.start(settings);
-    setAudioReady(true);
     setLoadingAudio(false);
     setIsPlaying(true);
+    syncAudioState();
   };
 
   const onSmoothStop = () => {
@@ -65,17 +100,27 @@ export default function App() {
 
   const onPadTap = async (key: PadSettings['key']) => {
     setLoadingAudio(true);
-    await engine.ensureStartedFromGesture();
+    const unlocked = await unlockAudioIfNeeded();
+    if (!unlocked) {
+      setLoadingAudio(false);
+      return;
+    }
     const nextPlaying = await engine.playOrToggle(key);
-    setAudioReady(true);
     setLoadingAudio(false);
     setIsPlaying(nextPlaying);
     if (nextPlaying) {
       setSettings((prev) => ({ ...prev, key }));
     }
+    syncAudioState();
   };
 
-  const status = useMemo(() => (isPlaying ? 'AO VIVO' : 'PARADO'), [isPlaying]);
+  const onReverseTest = async () => {
+    const unlocked = await unlockAudioIfNeeded();
+    if (!unlocked) return;
+    engine.triggerReverseTest();
+  };
+
+  const status = useMemo(() => (isPlaying ? 'PLAYING' : AUDIO_LABELS[audioStatus]), [audioStatus, isPlaying]);
 
   useEffect(() => {
     const handler = async (event: KeyboardEvent) => {
@@ -89,9 +134,7 @@ export default function App() {
         else await onStart();
       }
 
-      if (event.key === 'Escape') {
-        onPanic();
-      }
+      if (event.key === 'Escape') onPanic();
 
       if (event.key === 'ArrowRight') {
         event.preventDefault();
@@ -110,9 +153,7 @@ export default function App() {
       if (/^[1-8]$/.test(event.key)) {
         const presetList = Object.keys(WORSHIP_PRESETS) as WorshipPresetName[];
         const preset = presetList[Number(event.key) - 1];
-        if (preset) {
-          await applySettings({ preset, ...WORSHIP_PRESETS[preset] });
-        }
+        if (preset) await applySettings({ preset, ...WORSHIP_PRESETS[preset] });
       }
     };
 
@@ -122,7 +163,7 @@ export default function App() {
   }, [settings, isPlaying]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
+    <div className="min-h-screen bg-slate-950 text-slate-100" onPointerDown={() => void unlockAudioIfNeeded()}>
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-3 pb-8 pt-4">
         <header className={`${section} flex items-center justify-between`}>
           <div>
@@ -130,16 +171,18 @@ export default function App() {
             <p className="text-2xl font-black">{settings.key} {settings.mode === 'major' ? 'Major' : 'Minor'}</p>
           </div>
           <div className="text-right">
-            <span className={`rounded-full px-3 py-1 text-xs font-bold ${isPlaying ? 'bg-emerald-400/20 text-emerald-300' : 'bg-slate-800 text-slate-400'}`}>{status}</span>
-            <p className="mt-2 text-xs text-slate-400">{audioReady ? 'Áudio pronto' : 'Toque em Start para liberar áudio'}</p>
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${isPlaying ? 'bg-emerald-400/20 text-emerald-300' : audioStatus === 'error' ? 'bg-rose-500/20 text-rose-300' : 'bg-slate-800 text-slate-300'}`}>{status}</span>
+            <p className="mt-2 text-xs text-slate-400">{audioStatus === 'locked' ? 'Tap Start to enable audio' : audioStatus === 'unlocking' ? 'Unlocking audio...' : audioStatus === 'error' ? 'Audio unlock failed' : 'Audio ready'}</p>
+            {audioError && <p className="mt-1 text-[11px] text-rose-300">{audioError}</p>}
           </div>
         </header>
 
-        <section className={`${section} grid grid-cols-2 gap-2 sm:grid-cols-4`}>
+        <section className={`${section} grid grid-cols-2 gap-2 sm:grid-cols-5`}>
           <button className="btn-primary" onClick={() => void onStart()}>Start</button>
           <button className="btn-muted" onClick={onSmoothStop}>Smooth Stop</button>
           <button className="btn-danger" onClick={onPanic}>Panic</button>
           <button className={`btn-muted ${settings.hold ? 'bg-amber-500 text-black' : ''}`} onClick={() => void applySettings({ hold: !settings.hold })}>Hold</button>
+          <button className="btn-muted" onClick={() => void onReverseTest()}>Test Reverse</button>
         </section>
 
         <section className={section}>
@@ -165,14 +208,10 @@ export default function App() {
 
         <section className={section}>
           <h2 className="mb-2 text-sm font-semibold text-slate-300">Worship Presets</h2>
-          <select
-            className="input"
-            value={settings.preset}
-            onChange={(e) => {
-              const preset = e.target.value as WorshipPresetName;
-              void applySettings({ preset, ...WORSHIP_PRESETS[preset] });
-            }}
-          >
+          <select className="input" value={settings.preset} onChange={(e) => {
+            const preset = e.target.value as WorshipPresetName;
+            void applySettings({ preset, ...WORSHIP_PRESETS[preset] });
+          }}>
             {(Object.keys(WORSHIP_PRESETS) as WorshipPresetName[]).map((name) => <option key={name} value={name}>{WORSHIP_PRESETS[name].label}</option>)}
           </select>
         </section>
@@ -263,7 +302,7 @@ export default function App() {
           </div>
         </section>
 
-        {loadingAudio && <p className="text-center text-xs text-violet-200">Carregando áudio...</p>}
+        {loadingAudio && <p className="text-center text-xs text-violet-200">Unlocking / loading audio...</p>}
       </div>
     </div>
   );
