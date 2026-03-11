@@ -5,60 +5,175 @@ const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(mi
 
 const LEVEL_GAIN: Record<ReverseAtmosphereLevel, number> = {
   off: 0,
-  light: 0.72,
-  medium: 1.1,
-  deep: 1.5,
+  light: 0.22,
+  medium: 0.34,
+  deep: 0.5,
+};
+
+const WINDOW_SECONDS: Record<Exclude<ReverseAtmosphereLevel, 'off'>, number> = {
+  light: 0.42,
+  medium: 0.72,
+  deep: 1.08,
 };
 
 const PRE_DELAY_TIMES: Record<ReversePreDelay, number> = {
-  short: 0.14,
-  medium: 0.24,
-  long: 0.36,
+  short: 0.05,
+  medium: 0.11,
+  long: 0.18,
+};
+
+type ActiveSource = {
+  source: AudioBufferSourceNode;
+  gain: GainNode;
 };
 
 export class ReverseAtmosphere {
-  private input = new Tone.Gain(0.9);
-  private hp = new Tone.Filter({ type: 'highpass', frequency: 150, Q: 0.22, rolloff: -12 });
-  private lp = new Tone.Filter({ type: 'lowpass', frequency: 3600, Q: 0.25, rolloff: -12 });
-  private width = new Tone.StereoWidener(0.68);
-  private preDelay = new Tone.FeedbackDelay({ delayTime: PRE_DELAY_TIMES.medium, feedback: 0.18, wet: 1 });
-  private reverseReverb = new Tone.Reverb({ decay: 5.2, preDelay: 0.04, wet: 1 });
-  private textureGain = new Tone.Gain(0.36);
-  private swellGain = new Tone.Gain(0);
-  private output = new Tone.Gain(0);
-  private debugSolo = false;
+  private readonly ctx: AudioContext;
+  private readonly input: GainNode;
+  private readonly captureTap: GainNode;
+  private readonly captureProcessor: ScriptProcessorNode;
+  private readonly captureSilentGain: GainNode;
+
+  private readonly output: GainNode;
+  private readonly wetGain: GainNode;
+
+  private readonly hp: BiquadFilterNode;
+  private readonly lp: BiquadFilterNode;
+  private readonly preDelay: DelayNode;
+
+  private readonly splitter: ChannelSplitterNode;
+  private readonly merger: ChannelMergerNode;
+  private readonly leftDirect: GainNode;
+  private readonly leftCross: GainNode;
+  private readonly rightDirect: GainNode;
+  private readonly rightCross: GainNode;
+
+  private readonly ringLength: number;
+  private readonly ringL: Float32Array;
+  private readonly ringR: Float32Array;
+  private writeIndex = 0;
+  private capturedSamples = 0;
 
   private level: ReverseAtmosphereLevel = 'off';
   private mix = 0.18;
   private tone = 0.52;
+  private width = 0.68;
   private duckingEnabled = true;
+  private debugSolo = false;
+  private initialized = false;
+  private disposed = false;
+
+  private activeSources = new Set<ActiveSource>();
 
   constructor() {
-    this.input.chain(this.hp, this.lp, this.width, this.preDelay, this.reverseReverb);
-    this.reverseReverb.connect(this.textureGain);
-    this.textureGain.connect(this.output);
-    this.reverseReverb.connect(this.swellGain);
-    this.swellGain.connect(this.output);
-  }
+    this.ctx = Tone.getContext().rawContext;
 
-  async init() {
-    await this.reverseReverb.generate();
+    this.input = this.ctx.createGain();
+    this.input.gain.value = 1;
+
+    this.captureTap = this.ctx.createGain();
+    this.captureTap.gain.value = 1;
+
+    this.captureProcessor = this.ctx.createScriptProcessor(1024, 2, 2);
+    this.captureSilentGain = this.ctx.createGain();
+    this.captureSilentGain.gain.value = 0;
+
+    this.output = this.ctx.createGain();
+    this.output.gain.value = 0;
+
+    this.wetGain = this.ctx.createGain();
+    this.wetGain.gain.value = 0;
+
+    this.hp = this.ctx.createBiquadFilter();
+    this.hp.type = 'highpass';
+    this.hp.frequency.value = 150;
+    this.hp.Q.value = 0.22;
+
+    this.lp = this.ctx.createBiquadFilter();
+    this.lp.type = 'lowpass';
+    this.lp.frequency.value = 3600;
+    this.lp.Q.value = 0.25;
+
+    this.preDelay = this.ctx.createDelay(1.5);
+    this.preDelay.delayTime.value = PRE_DELAY_TIMES.medium;
+
+    this.splitter = this.ctx.createChannelSplitter(2);
+    this.merger = this.ctx.createChannelMerger(2);
+    this.leftDirect = this.ctx.createGain();
+    this.leftCross = this.ctx.createGain();
+    this.rightDirect = this.ctx.createGain();
+    this.rightCross = this.ctx.createGain();
+
+    this.ringLength = Math.ceil(this.ctx.sampleRate * 2.4);
+    this.ringL = new Float32Array(this.ringLength);
+    this.ringR = new Float32Array(this.ringLength);
+
+    this.input.connect(this.captureTap);
+    this.captureTap.connect(this.captureProcessor);
+    this.captureProcessor.connect(this.captureSilentGain);
+    this.captureSilentGain.connect(this.ctx.destination);
+
+    this.hp.connect(this.lp);
+    this.lp.connect(this.preDelay);
+    this.preDelay.connect(this.splitter);
+
+    this.splitter.connect(this.leftDirect, 0);
+    this.splitter.connect(this.leftCross, 1);
+    this.splitter.connect(this.rightDirect, 1);
+    this.splitter.connect(this.rightCross, 0);
+
+    this.leftDirect.connect(this.merger, 0, 0);
+    this.leftCross.connect(this.merger, 0, 0);
+    this.rightDirect.connect(this.merger, 0, 1);
+    this.rightCross.connect(this.merger, 0, 1);
+
+    this.merger.connect(this.wetGain);
+    this.wetGain.connect(this.output);
+
+    this.captureProcessor.onaudioprocess = (event) => {
+      if (this.disposed) return;
+
+      const inputL = event.inputBuffer.getChannelData(0);
+      const inputR =
+        event.inputBuffer.numberOfChannels > 1
+          ? event.inputBuffer.getChannelData(1)
+          : inputL;
+
+      for (let i = 0; i < inputL.length; i++) {
+        this.ringL[this.writeIndex] = inputL[i];
+        this.ringR[this.writeIndex] = inputR[i];
+        this.writeIndex = (this.writeIndex + 1) % this.ringLength;
+      }
+
+      this.capturedSamples = Math.min(this.capturedSamples + inputL.length, this.ringLength);
+    };
+
     this.applyTone(this.tone);
+    this.applyWidth(this.width);
     this.applyOutputGain(false, 0.01);
   }
 
+  async init() {
+    this.initialized = true;
+  }
+
   connect(destination: Tone.ToneAudioNode | AudioNode | AudioParam) {
-    this.output.connect(destination);
-    console.info('[ReverseAtmosphere] reverse connected to master');
+    const target = (destination as Tone.ToneAudioNode & { input?: AudioNode }).input ?? destination;
+    this.output.connect(target as AudioNode | AudioParam);
+    console.info('[ReverseAtmosphere] real reverse connected');
   }
 
   connectInput(source: Tone.ToneAudioNode) {
     source.connect(this.input);
-    console.info('[ReverseAtmosphere] reverse input active');
+    console.info('[ReverseAtmosphere] capture input connected');
   }
 
   disconnectInput(source: Tone.ToneAudioNode) {
-    source.disconnect(this.input);
+    try {
+      source.disconnect(this.input);
+    } catch {
+      // ignore
+    }
   }
 
   setAmount(level: ReverseAtmosphereLevel) {
@@ -77,11 +192,12 @@ export class ReverseAtmosphere {
   }
 
   setPreDelay(mode: ReversePreDelay) {
-    this.preDelay.delayTime.rampTo(PRE_DELAY_TIMES[mode], 0.2);
+    this.preDelay.delayTime.setTargetAtTime(PRE_DELAY_TIMES[mode], this.ctx.currentTime, 0.02);
   }
 
   setWidth(value: number) {
-    this.width.width.rampTo(clamp(value, 0, 1), 0.2);
+    this.width = clamp(value, 0, 1);
+    this.applyWidth(this.width);
   }
 
   setDucking(enabled: boolean) {
@@ -90,82 +206,278 @@ export class ReverseAtmosphere {
   }
 
   applyDuckingContext(mainLevel: number, transitioning: boolean) {
-    this.applyOutputGain(transitioning, 0.14, clamp(mainLevel, 0, 1));
-  }
-
-  triggerTransitionSwell(strength = 1) {
-    if (this.level === 'off') return;
-    const now = Tone.now();
-    const predelaySeconds = Tone.Time(this.preDelay.delayTime.value).toSeconds();
-    const target = clamp((0.18 + this.mix * 0.86) * LEVEL_GAIN[this.level] * strength, 0.05, 0.82);
-
-    console.info('[ReverseAtmosphere] reverse trigger fired', { strength, target, level: this.level });
-
-    this.swellGain.gain.cancelScheduledValues(now);
-    this.swellGain.gain.setValueAtTime(0.004, now);
-    this.swellGain.gain.linearRampToValueAtTime(target, now + predelaySeconds + 0.14);
-    this.swellGain.gain.exponentialRampToValueAtTime(target * 0.42 + 0.002, now + predelaySeconds + 2.25);
+    this.applyOutputGain(transitioning, 0.09, clamp(mainLevel, 0, 1));
   }
 
   setDebugSolo(enabled: boolean) {
     this.debugSolo = enabled;
-    this.applyOutputGain(false, 0.12);
+    this.applyOutputGain(false, 0.08);
+  }
+
+  triggerTransitionSwell(strength = 1) {
+    if (!this.initialized || this.disposed) return;
+
+    const effectiveLevel: ReverseAtmosphereLevel =
+      this.debugSolo && this.level === 'off' ? 'deep' : this.level;
+
+    if (effectiveLevel === 'off') return;
+
+    const duration = WINDOW_SECONDS[effectiveLevel];
+    const target = this.createReverseBufferFromRing(duration, strength);
+
+    if (!target) {
+      console.info('[ReverseAtmosphere] not enough captured audio yet');
+      return;
+    }
+
+    this.playBuffer(target, effectiveLevel, strength);
   }
 
   triggerDebugPulse() {
-    const now = Tone.now();
-    const osc = new Tone.Oscillator({ type: 'sawtooth', frequency: 420, volume: -2 });
-    const gain = new Tone.Gain(0);
-    osc.connect(gain);
-    gain.connect(this.input);
-  
-    osc.start(now);
+    if (this.disposed) return;
+
+    const duration = 0.5;
+    const length = Math.max(1, Math.floor(this.ctx.sampleRate * duration));
+    const buffer = this.ctx.createBuffer(2, length, this.ctx.sampleRate);
+    const left = buffer.getChannelData(0);
+    const right = buffer.getChannelData(1);
+
+    for (let i = 0; i < length; i++) {
+      const t = i / this.ctx.sampleRate;
+      const decay = Math.exp(-t * 8.5);
+      const a =
+        Math.sin(2 * Math.PI * 220 * t) * 0.55 +
+        Math.sin(2 * Math.PI * 440 * t) * 0.28 +
+        Math.sin(2 * Math.PI * 880 * t) * 0.16;
+      const b =
+        Math.sin(2 * Math.PI * 226 * t) * 0.52 +
+        Math.sin(2 * Math.PI * 452 * t) * 0.24 +
+        Math.sin(2 * Math.PI * 904 * t) * 0.14;
+
+      left[i] = a * decay;
+      right[i] = b * decay;
+    }
+
+    const reversed = this.reverseBufferWithEnvelope(buffer, 1.15);
+    this.playBuffer(reversed, this.debugSolo ? 'deep' : 'medium', 1.15);
+  }
+
+  private playBuffer(
+    buffer: AudioBuffer,
+    effectiveLevel: Exclude<ReverseAtmosphereLevel, 'off'>,
+    strength: number,
+  ) {
+    const now = this.ctx.currentTime;
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+
+    const gain = this.ctx.createGain();
+    const base = LEVEL_GAIN[effectiveLevel] * clamp(this.mix * 1.35, 0.12, 1);
+    const debugBoost = this.debugSolo ? 1.35 : 1;
+    const finalGain = clamp(base * strength * debugBoost, 0.02, 1);
+
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(1.0, now + 0.03);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.75);
-  
-    osc.stop(now + 0.8);
-    osc.onstop = () => {
-      osc.dispose();
-      gain.dispose();
+    gain.gain.exponentialRampToValueAtTime(finalGain, now + 0.06);
+    gain.gain.exponentialRampToValueAtTime(Math.max(finalGain * 0.34, 0.0001), now + buffer.duration * 0.72);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + buffer.duration + 0.12);
+
+    source.connect(gain);
+    gain.connect(this.hp);
+
+    const active: ActiveSource = { source, gain };
+    this.activeSources.add(active);
+
+    source.onended = () => {
+      try {
+        source.disconnect();
+      } catch {}
+      try {
+        gain.disconnect();
+      } catch {}
+      this.activeSources.delete(active);
     };
+
+    source.start(now);
+    source.stop(now + buffer.duration + 0.15);
+
+    console.info('[ReverseAtmosphere] reverse swell played', {
+      level: effectiveLevel,
+      duration: buffer.duration,
+      strength,
+      finalGain,
+    });
+  }
+
+  private createReverseBufferFromRing(durationSeconds: number, strength: number): AudioBuffer | null {
+    if (this.capturedSamples < Math.floor(this.ctx.sampleRate * 0.12)) return null;
+
+    const wanted = Math.min(
+      Math.floor(durationSeconds * this.ctx.sampleRate),
+      this.capturedSamples,
+      this.ringLength,
+    );
+
+    if (wanted < 256) return null;
+
+    const temp = this.ctx.createBuffer(2, wanted, this.ctx.sampleRate);
+    const left = temp.getChannelData(0);
+    const right = temp.getChannelData(1);
+
+    let readIndex = (this.writeIndex - wanted + this.ringLength) % this.ringLength;
+
+    for (let i = 0; i < wanted; i++) {
+      left[i] = this.ringL[readIndex];
+      right[i] = this.ringR[readIndex];
+      readIndex = (readIndex + 1) % this.ringLength;
+    }
+
+    return this.reverseBufferWithEnvelope(temp, strength);
+  }
+
+  private reverseBufferWithEnvelope(buffer: AudioBuffer, strength: number): AudioBuffer {
+    const length = buffer.length;
+    const out = this.ctx.createBuffer(2, length, buffer.sampleRate);
+    const inL = buffer.getChannelData(0);
+    const inR = buffer.getChannelData(1);
+    const outL = out.getChannelData(0);
+    const outR = out.getChannelData(1);
+
+    const fadeInSamples = Math.max(48, Math.floor(buffer.sampleRate * 0.01));
+    const fadeOutSamples = Math.max(96, Math.floor(buffer.sampleRate * 0.018));
+
+    for (let i = 0; i < length; i++) {
+      const srcIndex = length - 1 - i;
+
+      let env = Math.pow(i / Math.max(1, length - 1), 1.8);
+      env *= 0.8 + strength * 0.24;
+
+      if (i < fadeInSamples) {
+        env *= i / fadeInSamples;
+      }
+
+      const tailIndex = length - 1 - i;
+      if (tailIndex < fadeOutSamples) {
+        env *= tailIndex / fadeOutSamples;
+      }
+
+      outL[i] = inL[srcIndex] * env;
+      outR[i] = inR[srcIndex] * env;
+    }
+
+    return out;
   }
 
   private applyTone(tone: number) {
-    const hp = 120 + tone * 190;
-    const lp = 2200 + tone * 3600;
-    this.hp.frequency.rampTo(hp, 0.25);
-    this.lp.frequency.rampTo(lp, 0.25);
+    const hp = 110 + tone * 220;
+    const lp = 1800 + tone * 5200;
+    this.hp.frequency.setTargetAtTime(hp, this.ctx.currentTime, 0.03);
+    this.lp.frequency.setTargetAtTime(lp, this.ctx.currentTime, 0.03);
   }
 
-  private applyOutputGain(transitioning: boolean, ramp = 0.2, mainLevel = 0.7) {
-    const effectiveLevel = this.debugSolo && this.level === 'off' ? 'deep' : this.level;
-    const base = this.mix * LEVEL_GAIN[effectiveLevel];
-    const duck = this.duckingEnabled ? clamp(1 - mainLevel * 0.12, 0.86, 1) : 1;
-    const transitionLift = transitioning ? 1.24 : 1;
-    const soloBoost = this.debugSolo ? 2.6 : 1;
-    const target = clamp(base * duck * transitionLift * soloBoost, 0, 0.95);
-  
-    console.info('[ReverseAtmosphere] reverse output gain', {
-      target,
-      level: this.level,
+  private applyWidth(width: number) {
+    const direct = 0.5 + width * 0.5;
+    const cross = 0.5 - width * 0.5;
+
+    this.leftDirect.gain.setTargetAtTime(direct, this.ctx.currentTime, 0.02);
+    this.rightDirect.gain.setTargetAtTime(direct, this.ctx.currentTime, 0.02);
+    this.leftCross.gain.setTargetAtTime(cross, this.ctx.currentTime, 0.02);
+    this.rightCross.gain.setTargetAtTime(cross, this.ctx.currentTime, 0.02);
+  }
+
+  private applyOutputGain(transitioning: boolean, ramp = 0.14, mainLevel = 0.7) {
+    const effectiveLevel: ReverseAtmosphereLevel =
+      this.debugSolo && this.level === 'off' ? 'deep' : this.level;
+
+    if (effectiveLevel === 'off') {
+      this.output.gain.setTargetAtTime(0, this.ctx.currentTime, ramp);
+      this.wetGain.gain.setTargetAtTime(0, this.ctx.currentTime, ramp);
+      return;
+    }
+
+    const base = clamp(this.mix * 1.25, 0, 1) * LEVEL_GAIN[effectiveLevel];
+    const duck = this.duckingEnabled ? clamp(1 - mainLevel * 0.22, 0.62, 1) : 1;
+    const transitionLift = transitioning ? 1.12 : 1;
+    const soloBoost = this.debugSolo ? 1.2 : 1;
+
+    const wet = clamp(base * duck * transitionLift * soloBoost, 0.02, 0.72);
+    const out = clamp(0.62 + wet * 0.6, 0.4, 1);
+
+    this.wetGain.gain.setTargetAtTime(wet, this.ctx.currentTime, ramp);
+    this.output.gain.setTargetAtTime(out, this.ctx.currentTime, ramp);
+
+    console.info('[ReverseAtmosphere] reverse gains', {
       effectiveLevel,
+      wet,
+      out,
       mix: this.mix,
       debugSolo: this.debugSolo,
+      transitioning,
     });
-  
-    this.output.gain.rampTo(target, ramp);
   }
 
   dispose() {
-    this.input.dispose();
-    this.hp.dispose();
-    this.lp.dispose();
-    this.width.dispose();
-    this.preDelay.dispose();
-    this.reverseReverb.dispose();
-    this.textureGain.dispose();
-    this.swellGain.dispose();
-    this.output.dispose();
+    if (this.disposed) return;
+    this.disposed = true;
+
+    this.captureProcessor.onaudioprocess = null;
+
+    for (const active of this.activeSources) {
+      try {
+        active.source.stop();
+      } catch {}
+      try {
+        active.source.disconnect();
+      } catch {}
+      try {
+        active.gain.disconnect();
+      } catch {}
+    }
+    this.activeSources.clear();
+
+    try {
+      this.input.disconnect();
+    } catch {}
+    try {
+      this.captureTap.disconnect();
+    } catch {}
+    try {
+      this.captureProcessor.disconnect();
+    } catch {}
+    try {
+      this.captureSilentGain.disconnect();
+    } catch {}
+    try {
+      this.hp.disconnect();
+    } catch {}
+    try {
+      this.lp.disconnect();
+    } catch {}
+    try {
+      this.preDelay.disconnect();
+    } catch {}
+    try {
+      this.splitter.disconnect();
+    } catch {}
+    try {
+      this.leftDirect.disconnect();
+    } catch {}
+    try {
+      this.leftCross.disconnect();
+    } catch {}
+    try {
+      this.rightDirect.disconnect();
+    } catch {}
+    try {
+      this.rightCross.disconnect();
+    } catch {}
+    try {
+      this.merger.disconnect();
+    } catch {}
+    try {
+      this.wetGain.disconnect();
+    } catch {}
+    try {
+      this.output.disconnect();
+    } catch {}
   }
 }
