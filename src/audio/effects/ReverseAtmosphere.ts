@@ -66,9 +66,17 @@ export class ReverseAtmosphere {
   private activeSources = new Set<ActiveSource>();
 
   constructor() {
-    const raw = Tone.getContext().rawContext;
-    if (!(raw instanceof AudioContext)) {
-      throw new Error('ReverseAtmosphere requires a live AudioContext');
+    const raw = Tone.getContext().rawContext as AudioContext;
+
+    if (
+      !raw ||
+      typeof raw.createGain !== 'function' ||
+      typeof raw.createBuffer !== 'function' ||
+      typeof raw.createBufferSource !== 'function' ||
+      typeof raw.createDelay !== 'function' ||
+      typeof raw.currentTime !== 'number'
+    ) {
+      throw new Error('ReverseAtmosphere could not access a valid audio context');
     }
 
     this.liveCtx = raw;
@@ -157,6 +165,7 @@ export class ReverseAtmosphere {
     this.applyWidth(this.width);
     this.applyOutputGain(false, 0.01);
   }
+}
 
   async init() {
     this.initialized = true;
